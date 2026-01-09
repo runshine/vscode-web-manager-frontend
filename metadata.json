@@ -1,0 +1,5 @@
+{
+  "name": "CodeVault Manager",
+  "description": "A professional source code project management system featuring secure multi-user login, advanced search with nested file tracking, and integrated web VSCode environment links.",
+  "requestFramePermissions": []
+}
