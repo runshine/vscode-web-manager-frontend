@@ -11,11 +11,17 @@ const ProjectDetail: React.FC = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [codeServer, setCodeServer] = useState<any>(null);
   const [k8sInfo, setK8sInfo] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'taskLogs'>('files');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [initLogs, setInitLogs] = useState('');
+  
+  // Task Logs States
+  const [taskLogsList, setTaskLogsList] = useState<any[]>([]);
+  const [selectedTaskLog, setSelectedTaskLog] = useState<any | null>(null);
+  const [isTaskLogsLoading, setIsTaskLogsLoading] = useState(false);
+
   const [showPassword, setShowPassword] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
 
@@ -41,6 +47,24 @@ const ProjectDetail: React.FC = () => {
     } catch (err) {
       console.error("Failed to fetch logs:", err);
       setInitLogs('System failed to retrieve logs.');
+    }
+  };
+
+  const fetchTaskLogs = async (projectId: string) => {
+    try {
+      setIsTaskLogsLoading(true);
+      const data = await ApiService.getProjectTaskLogs(projectId);
+      if (data && data.task_logs) {
+        setTaskLogsList(data.task_logs);
+      } else if (Array.isArray(data)) {
+        setTaskLogsList(data);
+      } else {
+        setTaskLogsList([]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch task logs:", err);
+    } finally {
+      setIsTaskLogsLoading(false);
     }
   };
 
@@ -72,6 +96,9 @@ const ProjectDetail: React.FC = () => {
       if (activeTab === 'logs' || mergedProject.status === 'initializing' || mergedProject.status === 'pending') {
         fetchLogs(id);
       }
+      if (activeTab === 'taskLogs') {
+        fetchTaskLogs(id);
+      }
     } catch (err: any) {
       console.error("Project fetch error:", err);
       if (!isSilent) navigate('/');
@@ -88,10 +115,11 @@ const ProjectDetail: React.FC = () => {
   }, [id]);
 
   useEffect(() => {
-    if (activeTab === 'logs' && id) {
-      fetchLogs(id);
+    if (id) {
+      if (activeTab === 'logs') fetchLogs(id);
+      if (activeTab === 'taskLogs') fetchTaskLogs(id);
     }
-  }, [activeTab]);
+  }, [activeTab, id]);
 
   const filteredFiles = useMemo(() => {
     if (!project?.files) return [];
@@ -231,7 +259,7 @@ const ProjectDetail: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Info Display (Bottom-Left) */}
+        {/* Sidebar Info Display */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
@@ -296,12 +324,13 @@ const ProjectDetail: React.FC = () => {
           )}
         </div>
 
-        {/* Main Content Area */}
+        {/* Main Content Area with Tabs */}
         <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 shadow-sm min-h-[700px] flex flex-col overflow-hidden">
-          <div className="flex border-b border-slate-100 px-6 bg-slate-50/20">
+          <div className="flex border-b border-slate-100 px-6 bg-slate-50/20 overflow-x-auto scrollbar-hide">
             <TabBtn active={activeTab === 'files'} onClick={() => setActiveTab('files')}>Files</TabBtn>
-            <TabBtn active={activeTab === 'infra'} onClick={() => setActiveTab('infra')}>K8s Infra</TabBtn>
-            <TabBtn active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>Init Logs</TabBtn>
+            <TabBtn active={activeTab === 'infra'} onClick={() => { setActiveTab('infra'); setSelectedTaskLog(null); }}>K8s Infra</TabBtn>
+            <TabBtn active={activeTab === 'logs'} onClick={() => { setActiveTab('logs'); setSelectedTaskLog(null); }}>Init Logs</TabBtn>
+            <TabBtn active={activeTab === 'taskLogs'} onClick={() => { setActiveTab('taskLogs'); setSelectedTaskLog(null); }}>Task Logs</TabBtn>
           </div>
 
           <div className="flex-1 p-8">
@@ -425,7 +454,6 @@ const ProjectDetail: React.FC = () => {
                     ) : <p className="text-xs text-slate-400">Volume lookup active.</p>}
                 </div>
 
-                {/* Reconstruction Operations Section */}
                 <div className="bg-slate-900 rounded-3xl p-8 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
                     <svg className="w-24 h-24 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
@@ -434,7 +462,6 @@ const ProjectDetail: React.FC = () => {
                     <h4 className="text-lg font-black text-white mb-2">Infrastructure Maintenance</h4>
                     <p className="text-slate-400 text-sm max-w-lg mb-8">Execute reconstruction operations on project resources. Note that PVC reconstruction will purge all current data on the volume.</p>
                     <div className="flex flex-wrap gap-4">
-                      {/* Code Server Reconstruction */}
                       <button 
                         onClick={() => setConfirmConfig({
                           isOpen: true,
@@ -450,7 +477,6 @@ const ProjectDetail: React.FC = () => {
                         Recreate IDE
                       </button>
 
-                      {/* PVC Reconstruction - Disabled when codeServer exists */}
                       <button 
                         onClick={() => setConfirmConfig({
                           isOpen: true,
@@ -483,6 +509,109 @@ const ProjectDetail: React.FC = () => {
                 <div className="bg-slate-950 rounded-2xl p-8 font-mono text-[11px] text-emerald-400/80 flex-1 min-h-[450px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
                   {initLogs ? initLogs : 'Aggregating container stdout...'}
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'taskLogs' && (
+              <div className="flex flex-col h-full space-y-4">
+                {selectedTaskLog ? (
+                  <div className="flex flex-col h-full space-y-4 animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => setSelectedTaskLog(null)}
+                          className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
+                        >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                        </button>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-900">{selectedTaskLog.task_type.toUpperCase()} Log</h4>
+                          <p className="text-[10px] text-slate-400 font-mono">{selectedTaskLog.task_id}</p>
+                        </div>
+                      </div>
+                      <div className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase border ${
+                        selectedTaskLog.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                        selectedTaskLog.status === 'failed' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100'
+                      }`}>
+                        {selectedTaskLog.status}
+                      </div>
+                    </div>
+                    <div className="bg-slate-950 rounded-2xl p-8 font-mono text-[11px] text-indigo-400/80 flex-1 min-h-[450px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
+                      {selectedTaskLog.log_preview || 'No details recorded for this task.'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Task Execution History</h4>
+                      <p className="text-[10px] text-slate-400 italic">Click a row to view full logs</p>
+                    </div>
+                    
+                    {isTaskLogsLoading && taskLogsList.length === 0 ? (
+                      <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-xl border border-slate-100">
+                        <table className="w-full text-left">
+                          <thead className="text-[10px] font-black text-slate-400 uppercase bg-slate-50/50 border-b border-slate-100">
+                            <tr>
+                              <th className="py-4 px-6">Task Type</th>
+                              <th className="py-4 px-6">Status</th>
+                              <th className="py-4 px-6">Created At</th>
+                              <th className="py-4 px-6 text-right">Duration</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {taskLogsList.length > 0 ? (
+                              taskLogsList.map((log) => (
+                                <tr 
+                                  key={log.id} 
+                                  onClick={() => setSelectedTaskLog(log)}
+                                  className="hover:bg-indigo-50/30 transition-colors cursor-pointer group"
+                                  title="Click to view details"
+                                >
+                                  <td className="py-4 px-6">
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-lg opacity-40 group-hover:opacity-100 transition-opacity">
+                                        {log.task_type === 'init' ? '🚀' : log.task_type === 'recreate_pvc' ? '💾' : '⚙️'}
+                                      </span>
+                                      <span className="text-xs font-bold text-slate-700">{log.task_type.toUpperCase()}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-4 px-6">
+                                    <div className="flex items-center gap-2">
+                                      <div className={`w-1.5 h-1.5 rounded-full ${
+                                        log.status === 'completed' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                                        log.status === 'failed' ? 'bg-red-500' : 'bg-amber-400 animate-pulse'
+                                      }`} />
+                                      <span className={`text-[10px] font-bold uppercase tracking-tight ${
+                                        log.status === 'completed' ? 'text-emerald-600' :
+                                        log.status === 'failed' ? 'text-red-600' : 'text-amber-600'
+                                      }`}>
+                                        {log.status}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="py-4 px-6 text-[11px] text-slate-500 font-mono">
+                                    {new Date(log.created_at).toLocaleString()}
+                                  </td>
+                                  <td className="py-4 px-6 text-right text-[11px] text-slate-400 font-mono">
+                                    {log.completed_at ? (
+                                      `${Math.round((new Date(log.completed_at).getTime() - new Date(log.created_at).getTime()) / 1000)}s`
+                                    ) : 'In Progress...'}
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={4} className="py-20 text-center text-slate-400 italic">No task lifecycle events recorded.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

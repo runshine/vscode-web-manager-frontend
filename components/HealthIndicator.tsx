@@ -32,7 +32,7 @@ const HealthIndicator: React.FC = () => {
   return (
     <div className="fixed bottom-6 right-6 z-[200] flex flex-col items-end">
       {isOpen && (
-        <div className="mb-3 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-2 duration-300">
+        <div className="mb-3 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-2 duration-300">
           <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">System Monitor</h4>
             <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -41,7 +41,7 @@ const HealthIndicator: React.FC = () => {
           </div>
           <div className="p-4 space-y-3">
             <div className="flex justify-between items-center">
-              <span className="text-sm text-slate-600">Heartbeat</span>
+              <span className="text-sm text-slate-600">Overall Status</span>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${isHealthy ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
                 {health?.status || 'UNKNOWN'}
               </span>
@@ -51,9 +51,23 @@ const HealthIndicator: React.FC = () => {
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 {Object.entries(health.checks).map(([key, value]: [string, any]) => {
                   if (key === 'stats') return null;
+
+                  // Handle info-only display keys
+                  const infoKeys = ['k8s_api_url', 'k8s_namespace', 'k8s_auth'];
+                  if (infoKeys.includes(key)) {
+                    return (
+                      <div key={key} className="flex justify-between items-center text-[10px] py-0.5">
+                        <span className="text-slate-400 capitalize">{key.replace(/k8s_/g, 'K8s ').replace(/_/g, ' ')}</span>
+                        <span className="text-slate-600 font-medium truncate max-w-[140px] text-right" title={String(value)}>
+                          {String(value)}
+                        </span>
+                      </div>
+                    );
+                  }
+
                   const checkValue = typeof value === 'string' ? value : '';
-                  // FIX: Use exact comparison to avoid "unhealthy" being matched as "healthy"
-                  const isCheckHealthy = checkValue === 'healthy';
+                  // Logic: if it starts with "healthy", it is considered healthy
+                  const isCheckHealthy = checkValue.startsWith('healthy');
                   
                   return (
                     <div key={key} className="flex justify-between items-center text-[11px]">
@@ -70,21 +84,21 @@ const HealthIndicator: React.FC = () => {
               </div>
             )}
 
-            {health?.checks?.stats && (
+            {health?.checks?.stats?.details && (
               <div className="space-y-1 pt-2 border-t border-slate-100">
                 <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Cluster Resources</div>
                 <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
                    <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-100">
                       <div className="text-slate-400">Users</div>
-                      <div className="font-extrabold text-slate-800">{health.checks.stats.users}</div>
+                      <div className="font-extrabold text-slate-800">{health.checks.stats.details.users}</div>
                    </div>
                    <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-100">
                       <div className="text-slate-400">Projects</div>
-                      <div className="font-extrabold text-slate-800">{health.checks.stats.projects}</div>
+                      <div className="font-extrabold text-slate-800">{health.checks.stats.details.projects}</div>
                    </div>
                    <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-100">
                       <div className="text-slate-400">Pods</div>
-                      <div className="font-extrabold text-slate-800">{health.checks.stats.code_servers}</div>
+                      <div className="font-extrabold text-slate-800">{health.checks.stats.details.code_servers}</div>
                    </div>
                 </div>
               </div>
