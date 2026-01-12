@@ -1,5 +1,6 @@
 
-export type ProjectStatus = 'waiting' | 'creating' | 'success' | 'failed';
+export type ProjectStatus = 'pending' | 'initializing' | 'ready' | 'error' | 'deleting';
+export type CodeServerStatus = 'pending' | 'creating' | 'running' | 'stopped' | 'error' | 'deleting';
 
 export interface User {
   id: number;
@@ -18,20 +19,27 @@ export interface FileItem {
 
 export interface Project {
   id: string;
-  owner_id: string;
   name: string;
+  // Fix: Add owner_id to match usage in storage service
+  owner_id: string;
   description?: string;
+  status: ProjectStatus;
   total_size: number;
   file_count: number;
+  archive_size: number;
+  original_filename?: string;
   created_at: string;
+  initialized_at?: string;
   code_server_status: string | null;
-  files?: FileItem[];
   access_url?: string;
   error_message?: string;
-  // Fix: Added original_filename to Project interface to support archive type display in ProjectDetail.tsx
-  original_filename?: string;
-  // Fix: Added archive_size property to Project interface to resolve access error in ProjectDetail.tsx
-  archive_size?: number;
+  // PVC related
+  pvc_name?: string;
+  pvc_status?: string;
+  pvc_size?: string;
+  file_synced?: boolean;
+  init_error?: string;
+  files?: FileItem[];
 }
 
 export interface UserStats {

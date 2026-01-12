@@ -27,36 +27,31 @@ export const StorageService = {
       const initialProjects: Project[] = [
         {
           id: 'p1',
-          // Fix: ownerId renamed to owner_id to match Project interface
+          // Fix: owner_id is now part of the Project interface
           owner_id: '1',
           name: 'React Dashboard Pro',
-          // Fix: totalSize renamed to total_size
           total_size: 15728640,
-          // Fix: fileCount renamed to file_count
           file_count: 45,
-          // Fix: createdAt renamed to created_at
+          // Added required status and archive_size properties
+          status: 'ready',
+          archive_size: 5000000,
           created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
           files: [...mockFiles],
-          // Fix: vscodeUrl renamed to access_url
           access_url: 'https://vscode.dev/github/admin/dashboard',
-          // Fix: status renamed to code_server_status; 'success' mapped to 'running'
           code_server_status: 'running'
         },
         {
           id: 'p2',
-          // Fix: ownerId renamed to owner_id
           owner_id: '1',
           name: 'AI Image Generator',
-          // Fix: totalSize renamed to total_size
           total_size: 52428800,
-          // Fix: fileCount renamed to file_count
           file_count: 120,
-          // Fix: createdAt renamed to created_at
+          // Added required status and archive_size properties
+          status: 'ready',
+          archive_size: 12000000,
           created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
           files: [...mockFiles],
-          // Fix: vscodeUrl renamed to access_url
           access_url: '',
-          // Fix: status renamed to code_server_status
           code_server_status: null
         }
       ];
@@ -121,7 +116,6 @@ export const StorageService = {
   // Mock Asynchronous VSCode Project Creation
   async createVSCodeProject(project: Project, onUpdate: (p: Project) => void): Promise<void> {
     // 1. Set to creating
-    // Fix: replaced status with code_server_status to match Project interface
     const creatingProject = { ...project, code_server_status: 'creating' };
     this.updateProject(creatingProject);
     onUpdate(creatingProject);
@@ -136,14 +130,12 @@ export const StorageService = {
     if (isSuccess) {
       finalProject = {
         ...creatingProject,
-        // Fix: replaced status with code_server_status; replaced vscodeUrl with access_url
         code_server_status: 'running',
         access_url: `https://vscode.dev/github/user/${project.name.replace(/\s+/g, '-').toLowerCase()}`
       };
     } else {
       finalProject = {
         ...creatingProject,
-        // Fix: replaced status with code_server_status; replaced errorMessage with error_message
         code_server_status: 'failed',
         error_message: 'Backend build pipeline failed: Container resource limit exceeded during initialization.'
       };
