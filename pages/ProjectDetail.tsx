@@ -197,6 +197,9 @@ const ProjectDetail: React.FC = () => {
     window.open(editUrl, '_blank');
   };
 
+  // Logic: Disable PVC recreation if code-server is actively running or creating
+  const isPvcActionDisabled = actionLoading || (codeServer && (codeServer.status === 'running' || codeServer.status === 'creating'));
+
   if (loading && !project) return <div className="p-20 text-center animate-pulse text-slate-400 font-medium">Synchronizing Project Environment...</div>;
   if (!project) return null;
 
@@ -485,10 +488,10 @@ const ProjectDetail: React.FC = () => {
                           action: () => handlePVCAction('recreate'),
                           isDanger: true
                         })}
-                        disabled={actionLoading || !!codeServer}
-                        title={codeServer ? "You must delete the IDE instance before recreating the storage volume." : "Permanently delete and recreate storage"}
+                        disabled={isPvcActionDisabled}
+                        title={isPvcActionDisabled ? "Stop the IDE instance before recreating the storage volume." : "Permanently delete and recreate storage"}
                         className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${
-                          (actionLoading || !!codeServer) 
+                          isPvcActionDisabled 
                             ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700 opacity-60' 
                             : 'bg-red-900/40 text-red-200 border border-red-800/50 hover:bg-red-900/60'
                         }`}
