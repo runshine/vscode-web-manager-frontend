@@ -1,8 +1,8 @@
 
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Project, ProjectStatus } from '../types';
-import { ApiService } from '../services/api';
+import { Project, ProjectStatus } from '../types.ts';
+import { ApiService } from '../services/api.ts';
 
 interface ProjectTableProps {
   projects: Project[];
@@ -44,7 +44,6 @@ const ProjectTable: React.FC<ProjectTableProps> = ({
     if (status === 'error') return { color: 'bg-red-500', label: 'Setup Error', pulse: false };
     if (status === 'deleting') return { color: 'bg-red-400', label: 'Deleting', pulse: true };
     
-    // Project is Ready, check Code Server
     if (codeStatus === 'running') return { color: 'bg-emerald-500', label: 'IDE Online', pulse: false };
     if (codeStatus === 'creating') return { color: 'bg-indigo-500', label: 'Starting IDE', pulse: true };
     if (codeStatus === 'stopped') return { color: 'bg-slate-400', label: 'IDE Stopped', pulse: false };
@@ -132,7 +131,7 @@ const ProjectTable: React.FC<ProjectTableProps> = ({
                      <Link to={`/project/${project.id}`} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                      </Link>
-                     <button onClick={() => onDelete(project.id)} className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeWidth={2} /></svg></button>
+                     <button onClick={() => onDelete(project.id)} className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeWidth={2} /></svg></button>
                   </div>
                 </td>
               </tr>

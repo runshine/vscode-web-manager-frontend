@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { User, Project, UserStats } from '../types';
-import { ApiService } from '../services/api';
-import ProjectTable from '../components/ProjectTable';
-import UploadModal from '../components/UploadModal';
-import ConfirmModal from '../components/ConfirmModal';
+import { User, Project, UserStats } from '../types.ts';
+import { ApiService } from '../services/api.ts';
+import ProjectTable from '../components/ProjectTable.tsx';
+import UploadModal from '../components/UploadModal.tsx';
+import ConfirmModal from '../components/ConfirmModal.tsx';
 
 interface DashboardProps {
   user: User;
@@ -23,7 +23,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [sysStats, setSysStats] = useState<any>(null);
   const pollingRef = useRef<any>(null);
 
-  // Modal state
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -43,16 +42,17 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       if (!isSilent) setRefreshing(true);
       
       const data = await ApiService.getProjects(currentPage, pageSize, searchQuery);
-      let mergedProjects = data.projects;
+      let mergedProjects = data.projects || [];
       
       try {
-        const csData = await ApiService.getCodeServers(1, 100);
+        const csData = await ApiService.getCodeServers(1, 100).catch(() => null);
         if (csData && csData.code_servers) {
-          mergedProjects = data.projects.map((p: Project) => {
+          mergedProjects = mergedProjects.map((p: Project) => {
             const cs = csData.code_servers.find((c: any) => c.project_id === p.id);
             return {
               ...p,
-              access_url: cs?.access_url || p.access_url
+              access_url: cs?.access_url || p.access_url,
+              code_server_status: cs?.status || p.code_server_status
             };
           });
         }
@@ -61,10 +61,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       }
 
       setProjects(mergedProjects);
-      setTotalCount(data.total);
+      setTotalCount(data.total || mergedProjects.length);
       
-      const health = await ApiService.getHealth();
-      setSysStats(health.checks?.stats || null);
+      const health = await ApiService.getHealth().catch(() => null);
+      if (health) setSysStats(health.checks?.stats || null);
     } catch (err) {
       console.error(err);
     } finally {
@@ -105,8 +105,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     const totalBytes = projects.reduce((acc, p) => acc + (p.total_size || 0), 0);
     const totalStorage = (totalBytes / (1024 * 1024)).toFixed(2) + ' MB';
     return { 
-      totalProjects: sysStats?.projects || totalCount, 
-      totalFiles: sysStats?.files || totalFiles, 
+      totalProjects: sysStats?.details?.projects || totalCount, 
+      totalFiles: sysStats?.details?.files || totalFiles, 
       totalStorage 
     };
   }, [projects, totalCount, sysStats]);
@@ -131,7 +131,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     setConfirmConfig({
       isOpen: true,
       title: 'Bulk Delete Projects',
-      message: `You are about to permanently delete ${selectedIds.length} projects. This action will purge all code repositories and Kubernetes resources for each selected item. Proceed with caution.`,
+      message: `You are about to permanently delete ${selectedIds.length} projects. Proceed with caution.`,
       isDanger: true,
       action: async () => {
         await ApiService.deleteProjects(selectedIds);
@@ -155,7 +155,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               className="flex items-center gap-2 bg-red-50 text-red-600 border border-red-100 px-5 py-2.5 rounded-xl hover:bg-red-100 font-bold transition-all animate-in slide-in-from-right-4"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-              Delete {selectedIds.length} {selectedIds.length === 1 ? 'Project' : 'Projects'}
+              Delete {selectedIds.length}
             </button>
           )}
           <button
