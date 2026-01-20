@@ -37,7 +37,7 @@ export const ApiService = {
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const errorData = await response.json();
-          // Extract specific error detail if provided by FastAPI/Flask (e.g., "项目不存在")
+          // Extract specific error detail if provided by FastAPI/Flask
           errorMessage = errorData.detail || errorData.error?.message || errorMessage;
         } else {
           const textError = await response.text();
@@ -71,7 +71,6 @@ export const ApiService = {
     return response.json();
   },
 
-  // Fix: Added changePassword method to allow users to update security credentials from the Profile page.
   async changePassword(data: any) {
     return this.fetchWithAuth('/auth/change-password', {
       method: 'POST',
@@ -167,8 +166,12 @@ export const ApiService = {
   },
 
   async getDeploymentLogs(projectId: string, logType: string = 'all', lines: number = 100) {
-    // Matches the @app.get(f"{Config.API_PREFIX}/code-servers/{project_id}/deployment/logs") signature
     return this.fetchWithAuth(`/code-servers/${projectId}/deployment/logs?log_type=${logType}&lines=${lines}`);
+  },
+
+  async getCodeServerLogs(projectId: string, lines: number = 100) {
+    // Matches @app.get(f"{Config.API_PREFIX}/code-servers/{project_id}/logs")
+    return this.fetchWithAuth(`/code-servers/${projectId}/logs?lines=${lines}`);
   },
 
   async getHealth() {

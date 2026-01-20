@@ -11,7 +11,7 @@ const ProjectDetail: React.FC = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [codeServer, setCodeServer] = useState<any>(null);
   const [k8sInfo, setK8sInfo] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'deployLogs'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'deployLogs' | 'csLogs'>('files');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -26,6 +26,11 @@ const ProjectDetail: React.FC = () => {
   const [logType, setLogType] = useState<'all' | 'code-server' | 'init' | 'copy-job'>('all');
   const [logLines, setLogLines] = useState(200);
   const [isDeployLogsLoading, setIsDeployLogsLoading] = useState(false);
+
+  // Code-Server Specific Logs
+  const [csLogsData, setCsLogsData] = useState<any>(null);
+  const [csLogLines, setCsLogLines] = useState(200);
+  const [isCsLogsLoading, setIsCsLogsLoading] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
@@ -65,6 +70,19 @@ const ProjectDetail: React.FC = () => {
       setDeploymentLogs({ error: err.message, logs: [] });
     } finally {
       setIsDeployLogsLoading(false);
+    }
+  };
+
+  const fetchCodeServerLogs = async (projectId: string) => {
+    try {
+      setIsCsLogsLoading(true);
+      const data = await ApiService.getCodeServerLogs(projectId, csLogLines);
+      setCsLogsData(data);
+    } catch (err: any) {
+      console.warn("Failed to fetch code-server logs:", err.message);
+      setCsLogsData({ error: err.message });
+    } finally {
+      setIsCsLogsLoading(false);
     }
   };
 
@@ -113,6 +131,9 @@ const ProjectDetail: React.FC = () => {
       if (activeTab === 'deployLogs') {
         fetchDeploymentLogs(id);
       }
+      if (activeTab === 'csLogs') {
+        fetchCodeServerLogs(id);
+      }
     } catch (err: any) {
       console.error("Project fetch error:", err.message);
       setFetchError(err.message);
@@ -135,8 +156,9 @@ const ProjectDetail: React.FC = () => {
     if (id && id !== 'undefined') {
       if (activeTab === 'logs') fetchLogs(id);
       if (activeTab === 'deployLogs') fetchDeploymentLogs(id);
+      if (activeTab === 'csLogs') fetchCodeServerLogs(id);
     }
-  }, [activeTab, id, logType, logLines]);
+  }, [activeTab, id, logType, logLines, csLogLines]);
 
   const filteredFiles = useMemo(() => {
     if (!project?.files) return [];
@@ -155,7 +177,6 @@ const ProjectDetail: React.FC = () => {
 
   const showNotification = (type: 'error' | 'success', message: string) => {
     setNotification({ type, message });
-    // Auto clear after 6 seconds for error, 3 for success
     setTimeout(() => setNotification(null), type === 'error' ? 6000 : 3000);
   };
 
@@ -204,7 +225,6 @@ const ProjectDetail: React.FC = () => {
       showNotification('success', 'Storage volume (PVC) recreated successfully.');
       await fetchDetails(true);
     } catch (err: any) { 
-      // This will display "项目状态为 error，无法重建PVC。请等待项目初始化完成。" if that's what API returns
       showNotification('error', err.message);
     } finally { 
       setActionLoading(false); 
@@ -410,12 +430,14 @@ const ProjectDetail: React.FC = () => {
             <TabBtn active={activeTab === 'infra'} onClick={() => setActiveTab('infra')}>K8s Infra</TabBtn>
             <TabBtn active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>Init Logs</TabBtn>
             <TabBtn active={activeTab === 'deployLogs'} onClick={() => setActiveTab('deployLogs')}>Deploy Logs</TabBtn>
+            <TabBtn active={activeTab === 'csLogs'} onClick={() => setActiveTab('csLogs')}>Code-Server Logs</TabBtn>
           </div>
 
           <div className="flex-1 p-8">
             {activeTab === 'files' && (
               project.status === 'ready' ? (
                 <div className="space-y-6">
+                  {/* File searching & table logic ... */}
                   <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
                     <div className="relative w-full sm:max-w-md">
                       <input 
@@ -539,20 +561,19 @@ const ProjectDetail: React.FC = () => {
                   </div>
                   <div className="relative z-10">
                     <h4 className="text-lg font-black text-white mb-2">Infrastructure Maintenance</h4>
-                    <p className="text-slate-400 text-sm max-w-lg mb-8">Execute reconstruction operations on project resources. Note that PVC reconstruction will purge all current data on the volume.</p>
+                    <p className="text-slate-400 text-sm max-w-lg mb-8">Execute reconstruction operations on project resources.</p>
                     <div className="flex flex-wrap gap-4">
                       <button 
                         onClick={() => setConfirmConfig({
                           isOpen: true,
                           title: 'Recreate IDE',
-                          message: 'This will delete the current IDE deployment and start a new one. Your configuration may be reset, but persistent data in the workspace is preserved.',
+                          message: 'This will delete the current IDE deployment and start a new one.',
                           action: () => handleIDEAction('recreate'),
                           isDanger: false
                         })}
                         disabled={actionLoading}
                         className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all flex items-center gap-2"
                       >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                         Recreate IDE
                       </button>
 
@@ -560,19 +581,17 @@ const ProjectDetail: React.FC = () => {
                         onClick={() => setConfirmConfig({
                           isOpen: true,
                           title: 'Recreate PVC',
-                          message: 'DANGER: This will PERMANENTLY DELETE all current storage data and recreate the Persistent Volume Claim. This action cannot be undone.',
+                          message: 'DANGER: This will PERMANENTLY DELETE all current storage data.',
                           action: () => handlePVCAction('recreate'),
                           isDanger: true
                         })}
                         disabled={isPvcActionDisabled}
-                        title={isPvcActionDisabled ? "Stop the IDE instance before recreating the storage volume." : "Permanently delete and recreate storage"}
                         className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${
                           isPvcActionDisabled 
                             ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700 opacity-60' 
                             : 'bg-red-900/40 text-red-200 border border-red-800/50 hover:bg-red-900/60'
                         }`}
                       >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         Recreate PVC
                       </button>
 
@@ -616,59 +635,74 @@ const ProjectDetail: React.FC = () => {
                     >
                       {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
-                    <button 
-                      onClick={() => id && fetchDeploymentLogs(id)}
-                      disabled={isDeployLogsLoading}
-                      className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
-                    >
-                      <svg className={`w-4 h-4 ${isDeployLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
+                    <button onClick={() => id && fetchDeploymentLogs(id)} disabled={isDeployLogsLoading} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50">
+                      <svg className={`w-4 h-4 ${isDeployLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                     </button>
                   </div>
                 </div>
-
                 <div className="flex-1 space-y-6">
                   {isDeployLogsLoading && !deploymentLogs ? (
                     <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
                   ) : (deploymentLogs?.logs?.length > 0 || deploymentLogs?.error) ? (
                     <>
-                      {deploymentLogs.error && (
-                        <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2 mb-4">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          API Warning: {deploymentLogs.error}
-                        </div>
-                      )}
+                      {deploymentLogs.error && <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold mb-4">API Warning: {deploymentLogs.error}</div>}
                       {deploymentLogs.logs?.map((log: any, idx: number) => (
                         <div key={idx} className="space-y-2">
                           <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
-                              log.source === 'code-server' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
-                              log.source === 'init-container' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                              'bg-emerald-50 text-emerald-600 border-emerald-100'
-                            }`}>
-                              {log.source}
-                            </span>
-                            <span className="text-[10px] font-mono text-slate-400">
-                              {log.pod} {log.container ? `| Container: ${log.container}` : ''} {log.job ? `| Job: ${log.job}` : ''}
-                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${log.source === 'code-server' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>{log.source}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{log.pod}</span>
                           </div>
                           <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] min-h-[100px] max-h-[400px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
-                            {log.error ? (
-                              <span className="text-red-400 font-bold">{log.error}</span>
-                            ) : (
-                              <span className={log.source === 'code-server' ? 'text-indigo-400/90' : 'text-emerald-400/90'}>
-                                {log.content || 'Log stream is empty...'}
-                              </span>
-                            )}
+                            <span className={log.source === 'code-server' ? 'text-indigo-400/90' : 'text-emerald-400/90'}>{log.content || log.error || 'Empty stream...'}</span>
                           </div>
                         </div>
                       ))}
                     </>
+                  ) : <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl text-slate-400">No deployment logs found.</div>}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'csLogs' && (
+              <div className="flex flex-col h-full space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">IDE Log Stream</h4>
+                    {csLogsData?.pod_name && <span className="text-[10px] font-mono text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Pod: {csLogsData.pod_name}</span>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Lines:</label>
+                    <select 
+                      value={csLogLines} 
+                      onChange={(e) => setCsLogLines(Number(e.target.value))}
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-600 outline-none"
+                    >
+                      {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <button onClick={() => id && fetchCodeServerLogs(id)} disabled={isCsLogsLoading} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50">
+                      <svg className={`w-4 h-4 ${isCsLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1">
+                  {isCsLogsLoading && !csLogsData ? (
+                    <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
+                  ) : csLogsData ? (
+                    <div className="space-y-4">
+                      {csLogsData.error && (
+                        <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-bold flex items-center gap-3">
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                          {csLogsData.error}
+                        </div>
+                      )}
+                      <div className="bg-slate-950 rounded-3xl p-8 font-mono text-[11px] text-indigo-400/90 min-h-[500px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
+                        {csLogsData.logs || (csLogsData.error ? '' : 'Log stream is empty...')}
+                      </div>
+                    </div>
                   ) : (
-                    <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl">
-                      <p className="text-slate-400 italic text-sm">No deployment logs found for the current configuration.</p>
-                      <button onClick={() => id && fetchDeploymentLogs(id)} className="mt-4 text-indigo-600 font-bold text-xs hover:underline">Retry Connection</button>
+                    <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl text-slate-400">
+                      Initialize IDE log fetch to see runtime activity.
                     </div>
                   )}
                 </div>
