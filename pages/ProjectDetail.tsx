@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ApiService } from '../services/api';
-import { Project, FileItem } from '../types';
-import ConfirmModal from '../components/ConfirmModal';
+import { ApiService } from '../services/api.ts';
+import { Project, FileItem } from '../types.ts';
+import ConfirmModal from '../components/ConfirmModal.tsx';
 
 const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -11,16 +11,21 @@ const ProjectDetail: React.FC = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [codeServer, setCodeServer] = useState<any>(null);
   const [k8sInfo, setK8sInfo] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'taskLogs'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'deployLogs'>('files');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [initLogs, setInitLogs] = useState('');
+  const [fetchError, setFetchError] = useState<string | null>(null);
   
-  // Task Logs States
-  const [taskLogsList, setTaskLogsList] = useState<any[]>([]);
-  const [selectedTaskLog, setSelectedTaskLog] = useState<any | null>(null);
-  const [isTaskLogsLoading, setIsTaskLogsLoading] = useState(false);
+  // Action Notification State
+  const [notification, setNotification] = useState<{ type: 'error' | 'success', message: string } | null>(null);
+  
+  // Deployment Logs States
+  const [deploymentLogs, setDeploymentLogs] = useState<any>(null);
+  const [logType, setLogType] = useState<'all' | 'code-server' | 'init' | 'copy-job'>('all');
+  const [logLines, setLogLines] = useState(200);
+  const [isDeployLogsLoading, setIsDeployLogsLoading] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
@@ -45,48 +50,57 @@ const ProjectDetail: React.FC = () => {
       }
       setInitLogs(content || 'Logs are currently empty or being generated...');
     } catch (err) {
-      console.error("Failed to fetch logs:", err);
+      console.warn("Failed to fetch logs:", err);
       setInitLogs('System failed to retrieve logs.');
     }
   };
 
-  const fetchTaskLogs = async (projectId: string) => {
+  const fetchDeploymentLogs = async (projectId: string) => {
     try {
-      setIsTaskLogsLoading(true);
-      const data = await ApiService.getProjectTaskLogs(projectId);
-      if (data && data.task_logs) {
-        setTaskLogsList(data.task_logs);
-      } else if (Array.isArray(data)) {
-        setTaskLogsList(data);
-      } else {
-        setTaskLogsList([]);
-      }
-    } catch (err) {
-      console.error("Failed to fetch task logs:", err);
+      setIsDeployLogsLoading(true);
+      const data = await ApiService.getDeploymentLogs(projectId, logType, logLines);
+      setDeploymentLogs(data);
+    } catch (err: any) {
+      console.warn("Failed to fetch deployment logs:", err.message);
+      setDeploymentLogs({ error: err.message, logs: [] });
     } finally {
-      setIsTaskLogsLoading(false);
+      setIsDeployLogsLoading(false);
     }
   };
 
   const fetchDetails = async (isSilent = false) => {
-    if (!id) return;
+    if (!id || id === 'undefined') {
+      console.error("Invalid Project ID in URL");
+      navigate('/');
+      return;
+    }
+
     try {
       if (!isSilent) setLoading(true);
       if (isSilent) setRefreshing(true);
+      setFetchError(null);
 
       const [data, csResponse] = await Promise.all([
         ApiService.getProjectDetails(id),
-        ApiService.getCodeServer(id).catch(() => null)
+        ApiService.getCodeServer(id).catch(err => {
+          console.debug("Note: CodeServer record not found for this project yet.", err.message);
+          return null;
+        })
       ]);
+
+      if (!data) throw new Error("Received empty response from Project Details API");
+
+      const projectCore = data.project || (data.id ? data : null);
+      if (!projectCore) throw new Error("Could not find project data in response structure");
 
       const csData = csResponse?.code_server || null;
       const k8sData = csResponse?.k8s_info || null;
 
       const mergedProject = {
-        ...data.project,
-        files: data.files || [],
-        code_server_status: csData?.status || data.code_server?.status || null,
-        access_url: csData?.access_url || data.code_server?.access_url || null
+        ...projectCore,
+        files: data.files || projectCore.files || [],
+        code_server_status: csData?.status || projectCore.code_server_status || null,
+        access_url: csData?.access_url || projectCore.access_url || null
       };
 
       setProject(mergedProject);
@@ -96,12 +110,15 @@ const ProjectDetail: React.FC = () => {
       if (activeTab === 'logs' || mergedProject.status === 'initializing' || mergedProject.status === 'pending') {
         fetchLogs(id);
       }
-      if (activeTab === 'taskLogs') {
-        fetchTaskLogs(id);
+      if (activeTab === 'deployLogs') {
+        fetchDeploymentLogs(id);
       }
     } catch (err: any) {
-      console.error("Project fetch error:", err);
-      if (!isSilent) navigate('/');
+      console.error("Project fetch error:", err.message);
+      setFetchError(err.message);
+      if (!isSilent && (err.message.includes('不存在') || err.message.includes('Found'))) {
+        setTimeout(() => navigate('/'), 3000);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -115,11 +132,11 @@ const ProjectDetail: React.FC = () => {
   }, [id]);
 
   useEffect(() => {
-    if (id) {
+    if (id && id !== 'undefined') {
       if (activeTab === 'logs') fetchLogs(id);
-      if (activeTab === 'taskLogs') fetchTaskLogs(id);
+      if (activeTab === 'deployLogs') fetchDeploymentLogs(id);
     }
-  }, [activeTab, id]);
+  }, [activeTab, id, logType, logLines]);
 
   const filteredFiles = useMemo(() => {
     if (!project?.files) return [];
@@ -136,13 +153,24 @@ const ProjectDetail: React.FC = () => {
 
   const totalFilePages = Math.ceil(filteredFiles.length / filePageSize);
 
+  const showNotification = (type: 'error' | 'success', message: string) => {
+    setNotification({ type, message });
+    // Auto clear after 6 seconds for error, 3 for success
+    setTimeout(() => setNotification(null), type === 'error' ? 6000 : 3000);
+  };
+
   const handleCreateIDE = async () => {
     if (!project?.id) return;
     try {
       setActionLoading(true);
       await ApiService.createCodeServer(project.id);
+      showNotification('success', 'IDE creation initiated successfully.');
       await fetchDetails(true);
-    } catch (err: any) { alert(err.message); } finally { setActionLoading(false); }
+    } catch (err: any) { 
+      showNotification('error', err.message);
+    } finally { 
+      setActionLoading(false); 
+    }
   };
 
   const handleIDEAction = async (action: 'start' | 'stop' | 'restart' | 'delete' | 'recreate') => {
@@ -157,8 +185,13 @@ const ProjectDetail: React.FC = () => {
         await ApiService.deleteCodeServer(project.id).catch(() => {});
         await ApiService.createCodeServer(project.id);
       }
+      showNotification('success', `IDE ${action} action performed.`);
       await fetchDetails(true);
-    } catch (err: any) { alert(err.message); } finally { setActionLoading(false); }
+    } catch (err: any) { 
+      showNotification('error', err.message);
+    } finally { 
+      setActionLoading(false); 
+    }
   };
 
   const handlePVCAction = async (action: 'recreate') => {
@@ -168,8 +201,14 @@ const ProjectDetail: React.FC = () => {
       if (action === 'recreate') {
         await ApiService.recreatePVC(project.id);
       }
+      showNotification('success', 'Storage volume (PVC) recreated successfully.');
       await fetchDetails(true);
-    } catch (err: any) { alert(err.message); } finally { setActionLoading(false); }
+    } catch (err: any) { 
+      // This will display "项目状态为 error，无法重建PVC。请等待项目初始化完成。" if that's what API returns
+      showNotification('error', err.message);
+    } finally { 
+      setActionLoading(false); 
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -197,14 +236,53 @@ const ProjectDetail: React.FC = () => {
     window.open(editUrl, '_blank');
   };
 
-  // Logic: Disable PVC recreation if code-server is actively running or creating
   const isPvcActionDisabled = actionLoading || (codeServer && (codeServer.status === 'running' || codeServer.status === 'creating'));
 
-  if (loading && !project) return <div className="p-20 text-center animate-pulse text-slate-400 font-medium">Synchronizing Project Environment...</div>;
+  if (fetchError) {
+    return (
+      <div className="h-[80vh] flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+        <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 text-3xl shadow-sm border border-red-100">⚠️</div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2">Project Fetch Failed</h2>
+        <p className="text-slate-500 max-w-md mb-8">{fetchError}. Returning to registry...</p>
+        <Link to="/" className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-100">Back to Projects</Link>
+      </div>
+    );
+  }
+
+  if (loading && !project) return (
+    <div className="h-[80vh] flex flex-col items-center justify-center space-y-4">
+      <div className="w-12 h-12 border-4 border-indigo-50 border-t-indigo-600 rounded-full animate-spin"></div>
+      <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Synchronizing Context...</p>
+    </div>
+  );
+
   if (!project) return null;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-12 py-8 space-y-6">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-12 py-8 space-y-6 animate-in fade-in duration-500">
+      
+      {/* Floating Notification */}
+      {notification && (
+        <div className={`fixed top-20 right-6 z-[60] max-w-md p-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top-4 duration-300 ${
+          notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'
+        }`}>
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 rounded-full p-1 ${notification.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={notification.type === 'error' ? "M6 18L18 6M6 6l12 12" : "M5 13l4 4L19 7"} />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h5 className="text-xs font-black uppercase tracking-widest mb-1">{notification.type === 'error' ? 'Action Failed' : 'Action Success'}</h5>
+              <p className="text-sm font-medium leading-snug">{notification.message}</p>
+            </div>
+            <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="space-y-1">
@@ -262,7 +340,6 @@ const ProjectDetail: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Info Display */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
@@ -327,13 +404,12 @@ const ProjectDetail: React.FC = () => {
           )}
         </div>
 
-        {/* Main Content Area with Tabs */}
         <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 shadow-sm min-h-[700px] flex flex-col overflow-hidden">
           <div className="flex border-b border-slate-100 px-6 bg-slate-50/20 overflow-x-auto scrollbar-hide">
             <TabBtn active={activeTab === 'files'} onClick={() => setActiveTab('files')}>Files</TabBtn>
-            <TabBtn active={activeTab === 'infra'} onClick={() => { setActiveTab('infra'); setSelectedTaskLog(null); }}>K8s Infra</TabBtn>
-            <TabBtn active={activeTab === 'logs'} onClick={() => { setActiveTab('logs'); setSelectedTaskLog(null); }}>Init Logs</TabBtn>
-            <TabBtn active={activeTab === 'taskLogs'} onClick={() => { setActiveTab('taskLogs'); setSelectedTaskLog(null); }}>Task Logs</TabBtn>
+            <TabBtn active={activeTab === 'infra'} onClick={() => setActiveTab('infra')}>K8s Infra</TabBtn>
+            <TabBtn active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>Init Logs</TabBtn>
+            <TabBtn active={activeTab === 'deployLogs'} onClick={() => setActiveTab('deployLogs')}>Deploy Logs</TabBtn>
           </div>
 
           <div className="flex-1 p-8">
@@ -515,106 +591,87 @@ const ProjectDetail: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'taskLogs' && (
-              <div className="flex flex-col h-full space-y-4">
-                {selectedTaskLog ? (
-                  <div className="flex flex-col h-full space-y-4 animate-in fade-in duration-300">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => setSelectedTaskLog(null)}
-                          className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
-                        >
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-                        </button>
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-900">{selectedTaskLog.task_type.toUpperCase()} Log</h4>
-                          <p className="text-[10px] text-slate-400 font-mono">{selectedTaskLog.task_id}</p>
+            {activeTab === 'deployLogs' && (
+              <div className="flex flex-col h-full space-y-6">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    {(['all', 'code-server', 'init', 'copy-job'] as const).map(type => (
+                      <button
+                        key={type}
+                        onClick={() => setLogType(type)}
+                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                          logType === type ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Lines:</label>
+                    <select 
+                      value={logLines} 
+                      onChange={(e) => setLogLines(Number(e.target.value))}
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-600 outline-none"
+                    >
+                      {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <button 
+                      onClick={() => id && fetchDeploymentLogs(id)}
+                      disabled={isDeployLogsLoading}
+                      className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+                    >
+                      <svg className={`w-4 h-4 ${isDeployLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-6">
+                  {isDeployLogsLoading && !deploymentLogs ? (
+                    <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
+                  ) : (deploymentLogs?.logs?.length > 0 || deploymentLogs?.error) ? (
+                    <>
+                      {deploymentLogs.error && (
+                        <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2 mb-4">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          API Warning: {deploymentLogs.error}
                         </div>
-                      </div>
-                      <div className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase border ${
-                        selectedTaskLog.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                        selectedTaskLog.status === 'failed' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100'
-                      }`}>
-                        {selectedTaskLog.status}
-                      </div>
-                    </div>
-                    <div className="bg-slate-950 rounded-2xl p-8 font-mono text-[11px] text-indigo-400/80 flex-1 min-h-[450px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
-                      {selectedTaskLog.log_preview || 'No details recorded for this task.'}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Task Execution History</h4>
-                      <p className="text-[10px] text-slate-400 italic">Click a row to view full logs</p>
-                    </div>
-                    
-                    {isTaskLogsLoading && taskLogsList.length === 0 ? (
-                      <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
-                    ) : (
-                      <div className="overflow-x-auto rounded-xl border border-slate-100">
-                        <table className="w-full text-left">
-                          <thead className="text-[10px] font-black text-slate-400 uppercase bg-slate-50/50 border-b border-slate-100">
-                            <tr>
-                              <th className="py-4 px-6">Task Type</th>
-                              <th className="py-4 px-6">Status</th>
-                              <th className="py-4 px-6">Created At</th>
-                              <th className="py-4 px-6 text-right">Duration</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-50">
-                            {taskLogsList.length > 0 ? (
-                              taskLogsList.map((log) => (
-                                <tr 
-                                  key={log.id} 
-                                  onClick={() => setSelectedTaskLog(log)}
-                                  className="hover:bg-indigo-50/30 transition-colors cursor-pointer group"
-                                  title="Click to view details"
-                                >
-                                  <td className="py-4 px-6">
-                                    <div className="flex items-center gap-3">
-                                      <span className="text-lg opacity-40 group-hover:opacity-100 transition-opacity">
-                                        {log.task_type === 'init' ? '🚀' : log.task_type === 'recreate_pvc' ? '💾' : '⚙️'}
-                                      </span>
-                                      <span className="text-xs font-bold text-slate-700">{log.task_type.toUpperCase()}</span>
-                                    </div>
-                                  </td>
-                                  <td className="py-4 px-6">
-                                    <div className="flex items-center gap-2">
-                                      <div className={`w-1.5 h-1.5 rounded-full ${
-                                        log.status === 'completed' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
-                                        log.status === 'failed' ? 'bg-red-500' : 'bg-amber-400 animate-pulse'
-                                      }`} />
-                                      <span className={`text-[10px] font-bold uppercase tracking-tight ${
-                                        log.status === 'completed' ? 'text-emerald-600' :
-                                        log.status === 'failed' ? 'text-red-600' : 'text-amber-600'
-                                      }`}>
-                                        {log.status}
-                                      </span>
-                                    </div>
-                                  </td>
-                                  <td className="py-4 px-6 text-[11px] text-slate-500 font-mono">
-                                    {new Date(log.created_at).toLocaleString()}
-                                  </td>
-                                  <td className="py-4 px-6 text-right text-[11px] text-slate-400 font-mono">
-                                    {log.completed_at ? (
-                                      `${Math.round((new Date(log.completed_at).getTime() - new Date(log.created_at).getTime()) / 1000)}s`
-                                    ) : 'In Progress...'}
-                                  </td>
-                                </tr>
-                              ))
+                      )}
+                      {deploymentLogs.logs?.map((log: any, idx: number) => (
+                        <div key={idx} className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                              log.source === 'code-server' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
+                              log.source === 'init-container' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                              'bg-emerald-50 text-emerald-600 border-emerald-100'
+                            }`}>
+                              {log.source}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400">
+                              {log.pod} {log.container ? `| Container: ${log.container}` : ''} {log.job ? `| Job: ${log.job}` : ''}
+                            </span>
+                          </div>
+                          <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] min-h-[100px] max-h-[400px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
+                            {log.error ? (
+                              <span className="text-red-400 font-bold">{log.error}</span>
                             ) : (
-                              <tr>
-                                <td colSpan={4} className="py-20 text-center text-slate-400 italic">No task lifecycle events recorded.</td>
-                              </tr>
+                              <span className={log.source === 'code-server' ? 'text-indigo-400/90' : 'text-emerald-400/90'}>
+                                {log.content || 'Log stream is empty...'}
+                              </span>
                             )}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl">
+                      <p className="text-slate-400 italic text-sm">No deployment logs found for the current configuration.</p>
+                      <button onClick={() => id && fetchDeploymentLogs(id)} className="mt-4 text-indigo-600 font-bold text-xs hover:underline">Retry Connection</button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

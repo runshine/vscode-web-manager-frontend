@@ -37,7 +37,8 @@ export const ApiService = {
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const errorData = await response.json();
-          errorMessage = errorData.error?.message || errorData.detail || errorMessage;
+          // Extract specific error detail if provided by FastAPI/Flask (e.g., "项目不存在")
+          errorMessage = errorData.detail || errorData.error?.message || errorMessage;
         } else {
           const textError = await response.text();
           errorMessage = textError || `Error ${response.status}: ${response.statusText}`;
@@ -70,6 +71,14 @@ export const ApiService = {
     return response.json();
   },
 
+  // Fix: Added changePassword method to allow users to update security credentials from the Profile page.
+  async changePassword(data: any) {
+    return this.fetchWithAuth('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   // Projects
   async getProjects(page: number, size: number, search?: string) {
     let url = `/projects?page=${page}&size=${size}`;
@@ -87,10 +96,6 @@ export const ApiService = {
 
   async getProjectInitLogs(id: string, lines: number = 200) {
     return this.fetchWithAuth(`/projects/${id}/init-logs?lines=${lines}`);
-  },
-
-  async getProjectTaskLogs(id: string) {
-    return this.fetchWithAuth(`/projects/${id}/task-logs`);
   },
 
   async uploadProject(formData: FormData) {
@@ -112,32 +117,15 @@ export const ApiService = {
   },
 
   async deleteProjects(ids: string[]) {
-    // Perform sequential or parallel deletions depending on API constraints
-    // Since individual endpoints are standard, we use Promise.all
     return Promise.all(ids.map(id => this.deleteProject(id)));
   },
 
   // PVC Management
-  async createPVC(projectId: string, storageSize: string) {
-    const formData = new FormData();
-    formData.append('storage_size', storageSize);
-    const token = localStorage.getItem('cv_token');
-    return this.fetchWithAuth(`/projects/${projectId}/pvc/create`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` },
-      body: formData
-    });
-  },
-
   async recreatePVC(projectId: string, storageSize?: string) {
     return this.fetchWithAuth(`/projects/${projectId}/pvc/recreate`, {
       method: 'POST',
       body: JSON.stringify({ storage_size: storageSize })
     });
-  },
-
-  async deletePVC(projectId: string) {
-    return this.fetchWithAuth(`/projects/${projectId}/pvc`, { method: 'DELETE' });
   },
 
   // Code Server
@@ -178,32 +166,13 @@ export const ApiService = {
     return this.fetchWithAuth(`/code-servers/${projectId}`, { method: 'DELETE' });
   },
 
-  async getDeploymentStatus(projectId: string) {
-    return this.fetchWithAuth(`/code-servers/${projectId}/deployment/status`);
-  },
-
   async getDeploymentLogs(projectId: string, logType: string = 'all', lines: number = 100) {
+    // Matches the @app.get(f"{Config.API_PREFIX}/code-servers/{project_id}/deployment/logs") signature
     return this.fetchWithAuth(`/code-servers/${projectId}/deployment/logs?log_type=${logType}&lines=${lines}`);
-  },
-
-  async getGlobalSearch(query: string) {
-    return this.fetchWithAuth(`/search?q=${encodeURIComponent(query)}`);
-  },
-
-  async changePassword(passwords: any) {
-    return this.fetchWithAuth('/auth/change-password', {
-      method: 'POST',
-      body: JSON.stringify(passwords),
-    });
   },
 
   async getHealth() {
     return this.fetchWithAuth('/health');
-  },
-
-  getDownloadArchiveUrl(projectId: string) {
-    const token = localStorage.getItem('cv_token');
-    return `${API_BASE}/projects/${projectId}/download/archive?token=${token}`;
   },
 
   async downloadFile(projectId: string, filePath: string, fileName: string) {
