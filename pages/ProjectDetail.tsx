@@ -252,7 +252,7 @@ const ProjectDetail: React.FC = () => {
 
   const handleEditInIDE = (f: FileItem) => {
     if (!project?.access_url) return;
-    const editUrl = `${project.access_url}/?folder=/config/workspace/${f.path}`;
+    const editUrl = `${project.access_url}/?folder=/config/workspace&file=${f.path}`;
     window.open(editUrl, '_blank');
   };
 
