@@ -5,35 +5,74 @@ import { ApiService } from '../services/api.ts';
 import { Project, FileItem } from '../types.ts';
 import ConfirmModal from '../components/ConfirmModal.tsx';
 
+// Helper Components
+const StatItem = ({ label, value, status, isMono }: { label: string; value: string; status?: string; isMono?: boolean }) => (
+  <div className="group">
+    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-indigo-400 transition-colors">{label}</p>
+    <div className="flex items-center gap-2">
+      {status && <div className={`w-2 h-2 rounded-full ${status === 'ready' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-400 animate-pulse'}`} />}
+      <p className={`text-xs font-bold text-slate-700 truncate ${isMono ? 'font-mono tracking-tight text-slate-500' : ''}`}>{value}</p>
+    </div>
+  </div>
+);
+
+interface TabBtnProps {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+}
+
+const TabBtn: React.FC<TabBtnProps> = ({ children, active, onClick }) => (
+  <button onClick={onClick} className={`px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all border-b-2 whitespace-nowrap shrink-0 ${active ? 'border-indigo-600 text-indigo-600 bg-indigo-50/20' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>{children}</button>
+);
+
+const InfraPanel = ({ label, value, status, isMono }: { label: string; value: string; status?: string; isMono?: boolean }) => (
+  <div className="p-5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-300 transition-colors">
+    <div className="flex-1 min-w-0">
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+      <p className={`text-sm font-black text-slate-800 truncate ${isMono ? 'font-mono text-xs text-slate-500' : ''}`}>{value}</p>
+    </div>
+    {status && <div className={`shrink-0 ml-4 w-2.5 h-2.5 rounded-full ${status === 'ready' ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)]' : 'bg-amber-400 animate-pulse'}`} />}
+  </div>
+);
+
 const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [codeServer, setCodeServer] = useState<any>(null);
   const [k8sInfo, setK8sInfo] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'files' | 'infra' | 'logs' | 'deployLogs' | 'csLogs'>('files');
+  
+  // Tab Management
+  const [activeTab, setActiveTab] = useState<'files' | 'editor' | 'wiki' | 'infra' | 'systemLogs'>('files');
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [initLogs, setInitLogs] = useState('');
   const [fetchError, setFetchError] = useState<string | null>(null);
-  
-  // Action Notification State
   const [notification, setNotification] = useState<{ type: 'error' | 'success', message: string } | null>(null);
+
+  // Consolidated Log States
+  const [systemLogs, setSystemLogs] = useState<{ type: string, content: string }[]>([]);
+  const [selectedSystemLog, setSelectedSystemLog] = useState<number>(0);
+
+  // IDE Editor (Code-Server) States
+  const [ideLogs, setIdeLogs] = useState<string>('');
+  const [ideLogLines, setIdeLogLines] = useState(200);
+  const [isIdeLogsLoading, setIsIdeLogsLoading] = useState(false);
+  const [showIdePassword, setShowIdePassword] = useState(false);
+
+  // CodeWiki States
+  const [wikiData, setWikiData] = useState<any>(null);
+  const [wikiK8s, setWikiK8s] = useState<any>(null);
+  const [wikiLogs, setWikiLogs] = useState<string>('');
+  const [wikiTasks, setWikiTasks] = useState<any[]>([]);
+  const [isWikiLoading, setIsWikiLoading] = useState(false);
+  const [isWikiTaskLoading, setIsWikiTaskLoading] = useState(false);
+  const [isWikiLogsLoading, setIsWikiLogsLoading] = useState(false);
   
-  // Deployment Logs States
-  const [deploymentLogs, setDeploymentLogs] = useState<any>(null);
-  const [logType, setLogType] = useState<'all' | 'code-server' | 'init' | 'copy-job'>('all');
-  const [logLines, setLogLines] = useState(200);
-  const [isDeployLogsLoading, setIsDeployLogsLoading] = useState(false);
-
-  // Code-Server Specific Logs
-  const [csLogsData, setCsLogsData] = useState<any>(null);
-  const [csLogLines, setCsLogLines] = useState(200);
-  const [isCsLogsLoading, setIsCsLogsLoading] = useState(false);
-
-  const [showPassword, setShowPassword] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
+  // CodeWiki Creation Form
+  const [wikiConfig, setWikiConfig] = useState({ api_key: '', cpu_limit: '1000m', memory_limit: '1024Mi' });
 
   // File List States
   const [fileSearch, setFileSearch] = useState('');
@@ -44,79 +83,32 @@ const ProjectDetail: React.FC = () => {
     isOpen: boolean; title: string; message: string; action: () => Promise<void>; isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', action: async () => { }, isDanger: true });
 
-  const fetchLogs = async (projectId: string) => {
-    try {
-      const logData = await ApiService.getProjectInitLogs(projectId, 800);
-      let content = '';
-      if (typeof logData === 'string') {
-        content = logData;
-      } else if (logData) {
-        content = logData.log_content || logData.logs || logData.content || logData.detail || '';
-      }
-      setInitLogs(content || 'Logs are currently empty or being generated...');
-    } catch (err) {
-      console.warn("Failed to fetch logs:", err);
-      setInitLogs('System failed to retrieve logs.');
-    }
-  };
-
-  const fetchDeploymentLogs = async (projectId: string) => {
-    try {
-      setIsDeployLogsLoading(true);
-      const data = await ApiService.getDeploymentLogs(projectId, logType, logLines);
-      setDeploymentLogs(data);
-    } catch (err: any) {
-      console.warn("Failed to fetch deployment logs:", err.message);
-      setDeploymentLogs({ error: err.message, logs: [] });
-    } finally {
-      setIsDeployLogsLoading(false);
-    }
-  };
-
-  const fetchCodeServerLogs = async (projectId: string) => {
-    try {
-      setIsCsLogsLoading(true);
-      const data = await ApiService.getCodeServerLogs(projectId, csLogLines);
-      setCsLogsData(data);
-    } catch (err: any) {
-      console.warn("Failed to fetch code-server logs:", err.message);
-      setCsLogsData({ error: err.message });
-    } finally {
-      setIsCsLogsLoading(false);
-    }
+  const showNotification = (type: 'error' | 'success', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), type === 'error' ? 6000 : 3000);
   };
 
   const fetchDetails = async (isSilent = false) => {
-    if (!id || id === 'undefined') {
-      console.error("Invalid Project ID in URL");
-      navigate('/');
-      return;
-    }
-
+    if (!id) return;
     try {
       if (!isSilent) setLoading(true);
       if (isSilent) setRefreshing(true);
       setFetchError(null);
 
-      const [data, csResponse] = await Promise.all([
+      const [pData, csResponse] = await Promise.all([
         ApiService.getProjectDetails(id),
-        ApiService.getCodeServer(id).catch(err => {
-          console.debug("Note: CodeServer record not found for this project yet.", err.message);
-          return null;
-        })
+        ApiService.getCodeServer(id).catch(() => null)
       ]);
 
-      if (!data) throw new Error("Received empty response from Project Details API");
-
-      const projectCore = data.project || (data.id ? data : null);
-      if (!projectCore) throw new Error("Could not find project data in response structure");
+      const projectCore = pData.project || (pData.id ? pData : null);
+      if (!projectCore) throw new Error("Could not find project data");
 
       const csData = csResponse?.code_server || null;
       const k8sData = csResponse?.k8s_info || null;
 
       const mergedProject = {
         ...projectCore,
-        files: data.files || projectCore.files || [],
+        files: pData.files || projectCore.files || [],
         code_server_status: csData?.status || projectCore.code_server_status || null,
         access_url: csData?.access_url || projectCore.access_url || null
       };
@@ -125,72 +117,158 @@ const ProjectDetail: React.FC = () => {
       setCodeServer(csData);
       setK8sInfo(k8sData);
 
-      if (activeTab === 'logs' || mergedProject.status === 'initializing' || mergedProject.status === 'pending') {
-        fetchLogs(id);
-      }
-      if (activeTab === 'deployLogs') {
-        fetchDeploymentLogs(id);
-      }
-      if (activeTab === 'csLogs') {
-        fetchCodeServerLogs(id);
-      }
+      // Refresh data for current active tab
+      if (activeTab === 'editor') fetchIdeLogs();
+      if (activeTab === 'wiki') fetchWikiData();
+      if (activeTab === 'systemLogs') fetchSystemLogs();
     } catch (err: any) {
-      console.error("Project fetch error:", err.message);
+      console.error("Fetch error:", err.message);
       setFetchError(err.message);
-      if (!isSilent && (err.message.includes('不存在') || err.message.includes('Found'))) {
-        setTimeout(() => navigate('/'), 3000);
-      }
+      if (!isSilent) setTimeout(() => navigate('/'), 3000);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  const fetchIdeLogs = async () => {
+    if (!id) return;
+    try {
+      setIsIdeLogsLoading(true);
+      const data = await ApiService.getCodeServerLogs(id, ideLogLines);
+      setIdeLogs(data.logs || 'No logs available for IDE container.');
+    } catch (err: any) {
+      setIdeLogs(`Failed to fetch IDE logs: ${err.message}`);
+    } finally {
+      setIsIdeLogsLoading(false);
+    }
+  };
+
+  const fetchWikiData = async () => {
+    if (!id) return;
+    try {
+      setIsWikiLoading(true);
+      const data = await ApiService.getCodeWiki(id);
+      setWikiData(data.code_wiki);
+      setWikiK8s(data.k8s_info);
+      
+      if (data.code_wiki?.status === 'running') {
+        fetchWikiTasks();
+        fetchWikiLogs();
+      }
+    } catch (err: any) {
+      console.debug("CodeWiki not initialized yet.");
+      setWikiData(null);
+    } finally {
+      setIsWikiLoading(false);
+    }
+  };
+
+  const fetchWikiTasks = async () => {
+    if (!id) return;
+    try {
+      setIsWikiTaskLoading(true);
+      const data = await ApiService.listCodeWikiTasks(id);
+      setWikiTasks(data.tasks || []);
+    } catch (err: any) {
+      console.warn("Could not fetch Wiki tasks:", err.message);
+    } finally {
+      setIsWikiTaskLoading(false);
+    }
+  };
+
+  const fetchWikiLogs = async () => {
+    if (!id) return;
+    try {
+      setIsWikiLogsLoading(true);
+      const data = await ApiService.getCodeWikiLogs(id, 100);
+      setWikiLogs(data.logs || '');
+    } catch (err: any) {
+      setWikiLogs(`Wiki logs unavailable: ${err.message}`);
+    } finally {
+      setIsWikiLogsLoading(false);
+    }
+  };
+
+  const fetchSystemLogs = async () => {
+    if (!id) return;
+    try {
+      const [init, deploy] = await Promise.all([
+        ApiService.getProjectInitLogs(id, 200).catch(() => 'Init logs empty'),
+        ApiService.getDeploymentLogs(id, 'all', 100).catch(() => ({ logs: [] }))
+      ]);
+
+      const logsArr = [];
+      logsArr.push({ type: 'Initialization', content: typeof init === 'string' ? init : (init.log_content || JSON.stringify(init)) });
+      
+      if (deploy.logs) {
+        deploy.logs.forEach((l: any) => {
+          logsArr.push({ type: `Deploy: ${l.source}`, content: l.content || l.error || 'Empty' });
+        });
+      }
+      
+      setSystemLogs(logsArr);
+    } catch (err) {
+      console.error("System logs fetch failed");
+    }
+  };
+
   useEffect(() => {
     fetchDetails();
-    const interval = setInterval(() => fetchDetails(true), 15000);
+    const interval = setInterval(() => fetchDetails(true), 20000);
     return () => clearInterval(interval);
   }, [id]);
 
   useEffect(() => {
-    if (id && id !== 'undefined') {
-      if (activeTab === 'logs') fetchLogs(id);
-      if (activeTab === 'deployLogs') fetchDeploymentLogs(id);
-      if (activeTab === 'csLogs') fetchCodeServerLogs(id);
-    }
-  }, [activeTab, id, logType, logLines, csLogLines]);
+    if (!id) return;
+    if (activeTab === 'editor') fetchIdeLogs();
+    if (activeTab === 'wiki') fetchWikiData();
+    if (activeTab === 'systemLogs') fetchSystemLogs();
+  }, [activeTab, ideLogLines]);
 
-  const filteredFiles = useMemo(() => {
-    if (!project?.files) return [];
-    return project.files.filter(f => 
-      f.path.toLowerCase().includes(fileSearch.toLowerCase()) ||
-      f.name?.toLowerCase().includes(fileSearch.toLowerCase())
-    );
-  }, [project?.files, fileSearch]);
-
-  const paginatedFiles = useMemo(() => {
-    const start = (filePage - 1) * filePageSize;
-    return filteredFiles.slice(start, start + filePageSize);
-  }, [filteredFiles, filePage, filePageSize]);
-
-  const totalFilePages = Math.ceil(filteredFiles.length / filePageSize);
-
-  const showNotification = (type: 'error' | 'success', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), type === 'error' ? 6000 : 3000);
-  };
-
-  const handleCreateIDE = async () => {
-    if (!project?.id) return;
+  const handleCreateWiki = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id) return;
     try {
       setActionLoading(true);
-      await ApiService.createCodeServer(project.id);
-      showNotification('success', 'IDE creation initiated successfully.');
-      await fetchDetails(true);
-    } catch (err: any) { 
+      await ApiService.createCodeWiki(id, wikiConfig);
+      showNotification('success', 'CodeWiki creation task submitted.');
+      fetchWikiData();
+    } catch (err: any) {
       showNotification('error', err.message);
-    } finally { 
-      setActionLoading(false); 
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleWikiAction = async (action: 'start' | 'stop' | 'restart' | 'delete') => {
+    if (!id) return;
+    try {
+      setActionLoading(true);
+      if (action === 'start') await ApiService.startCodeWiki(id);
+      else if (action === 'stop') await ApiService.stopCodeWiki(id);
+      else if (action === 'restart') await ApiService.restartCodeWiki(id);
+      else if (action === 'delete') await ApiService.deleteCodeWiki(id);
+      showNotification('success', `Wiki ${action} performed.`);
+      fetchWikiData();
+    } catch (err: any) {
+      showNotification('error', err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCreateWikiTask = async () => {
+    if (!id) return;
+    try {
+      setActionLoading(true);
+      await ApiService.createCodeWikiTask(id, { name: "System Analysis", parameters: {} });
+      showNotification('success', 'Analysis task started.');
+      fetchWikiTasks();
+    } catch (err: any) {
+      showNotification('error', err.message);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -206,506 +284,425 @@ const ProjectDetail: React.FC = () => {
         await ApiService.deleteCodeServer(project.id).catch(() => {});
         await ApiService.createCodeServer(project.id);
       }
-      showNotification('success', `IDE ${action} action performed.`);
-      await fetchDetails(true);
-    } catch (err: any) { 
+      showNotification('success', `IDE ${action} completed.`);
+      fetchDetails(true);
+    } catch (err: any) {
       showNotification('error', err.message);
-    } finally { 
-      setActionLoading(false); 
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const handlePVCAction = async (action: 'recreate') => {
-    if (!project?.id) return;
-    try {
-      setActionLoading(true);
-      if (action === 'recreate') {
-        await ApiService.recreatePVC(project.id);
-      }
-      showNotification('success', 'Storage volume (PVC) recreated successfully.');
-      await fetchDetails(true);
-    } catch (err: any) { 
-      showNotification('error', err.message);
-    } finally { 
-      setActionLoading(false); 
-    }
-  };
+  const filteredFiles = useMemo(() => {
+    if (!project?.files) return [];
+    return project.files.filter(f => 
+      f.path.toLowerCase().includes(fileSearch.toLowerCase()) ||
+      f.name?.toLowerCase().includes(fileSearch.toLowerCase())
+    );
+  }, [project?.files, fileSearch]);
 
-  const formatSize = (bytes: number) => {
-    if (!bytes) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const handleCopyPassword = (pwd: string) => {
-    navigator.clipboard.writeText(pwd);
-    setCopyStatus('copied');
-    setTimeout(() => setCopyStatus('idle'), 2000);
-  };
-
-  const handleDownloadFile = (f: FileItem) => {
-    if (!project?.id) return;
-    ApiService.downloadFile(project.id, f.path, f.path.split('/').pop() || 'file');
-  };
-
-  const handleEditInIDE = (f: FileItem) => {
-    if (!project?.access_url) return;
-    const editUrl = `${project.access_url}/?folder=/config/workspace&file=${f.path}`;
-    window.open(editUrl, '_blank');
-  };
-
-  const isPvcActionDisabled = actionLoading || (codeServer && (codeServer.status === 'running' || codeServer.status === 'creating'));
+  const paginatedFiles = useMemo(() => {
+    const start = (filePage - 1) * filePageSize;
+    return filteredFiles.slice(start, start + filePageSize);
+  }, [filteredFiles, filePage, filePageSize]);
 
   if (fetchError) {
     return (
-      <div className="h-[80vh] flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
-        <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 text-3xl shadow-sm border border-red-100">⚠️</div>
-        <h2 className="text-2xl font-black text-slate-900 mb-2">Project Fetch Failed</h2>
-        <p className="text-slate-500 max-w-md mb-8">{fetchError}. Returning to registry...</p>
-        <Link to="/" className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-100">Back to Projects</Link>
+      <div className="h-[80vh] flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mb-6 text-2xl">⚠️</div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2">Sync Error</h2>
+        <p className="text-slate-500 max-w-sm mb-6">{fetchError}</p>
+        <Link to="/" className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold">Return to Registry</Link>
       </div>
     );
   }
 
-  if (loading && !project) return (
-    <div className="h-[80vh] flex flex-col items-center justify-center space-y-4">
-      <div className="w-12 h-12 border-4 border-indigo-50 border-t-indigo-600 rounded-full animate-spin"></div>
-      <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Synchronizing Context...</p>
-    </div>
-  );
-
+  if (loading && !project) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 animate-pulse uppercase tracking-widest text-xs">Connecting...</div>;
   if (!project) return null;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-12 py-8 space-y-6 animate-in fade-in duration-500">
+    <div className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-8 animate-in fade-in duration-500">
       
-      {/* Floating Notification */}
       {notification && (
-        <div className={`fixed top-20 right-6 z-[60] max-w-md p-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top-4 duration-300 ${
-          notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'
-        }`}>
-          <div className="flex items-start gap-3">
-            <div className={`mt-0.5 rounded-full p-1 ${notification.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={notification.type === 'error' ? "M6 18L18 6M6 6l12 12" : "M5 13l4 4L19 7"} />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <h5 className="text-xs font-black uppercase tracking-widest mb-1">{notification.type === 'error' ? 'Action Failed' : 'Action Success'}</h5>
-              <p className="text-sm font-medium leading-snug">{notification.message}</p>
-            </div>
-            <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
+        <div className={`fixed top-20 right-6 z-[60] max-w-sm p-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top-2 duration-300 ${notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
+          <p className="text-xs font-black uppercase mb-1">{notification.type === 'error' ? 'Operation Failure' : 'Operation OK'}</p>
+          <p className="text-sm font-medium">{notification.message}</p>
         </div>
       )}
 
-      {/* Header */}
+      {/* Header section with consolidated status */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="space-y-1">
-          <Link to="/" className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] flex items-center gap-1.5 hover:translate-x-[-4px] transition-transform">
+          <Link to="/" className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path d="M15 19l-7-7 7-7" /></svg>
             Registry
           </Link>
           <div className="flex items-center gap-4">
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">{project.name}</h1>
-            <div className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase border ${
-              project.status === 'ready' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-              project.status === 'error' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100 animate-pulse'
-            }`}>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${project.status === 'ready' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
               {project.status}
-            </div>
+            </span>
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-3">
-          <button 
-            onClick={() => fetchDetails(true)} 
-            disabled={refreshing}
-            className="p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-all shadow-sm flex items-center justify-center disabled:opacity-50"
-            title="Manual Refresh"
-          >
-            <svg className={`w-5 h-5 ${refreshing ? 'animate-spin text-indigo-600' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-
-          {project.status === 'ready' && (
-            <>
-              {project.code_server_status === 'running' ? (
-                <div className="flex gap-2">
-                  <a href={project.access_url} target="_blank" rel="noreferrer" className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all text-sm flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                    Open Editor
-                  </a>
-                  <button onClick={() => handleIDEAction('stop')} disabled={actionLoading} className="px-4 py-3 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors text-sm">Stop IDE</button>
-                </div>
-              ) : (project.code_server_status === 'creating' || project.code_server_status === 'pending') ? (
-                <button disabled className="px-6 py-3 bg-indigo-50 text-indigo-400 rounded-xl font-bold text-sm animate-pulse flex items-center gap-2">
-                  <div className="w-3 h-3 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" />
-                  Spinning Up...
-                </button>
-              ) : (
-                <button onClick={handleCreateIDE} disabled={actionLoading} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all text-sm flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                  Setup IDE
-                </button>
-              )}
-            </>
+        <div className="flex gap-3">
+          {project.access_url && project.code_server_status === 'running' && (
+             <a href={project.access_url} target="_blank" rel="noreferrer" className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2">
+               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+               Launch VSCode
+             </a>
           )}
+          {wikiData?.access_url && wikiData?.status === 'running' && (
+             <a href={wikiData.access_url} target="_blank" rel="noreferrer" className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-2">
+               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+               Open CodeWiki
+             </a>
+          )}
+          <button onClick={() => fetchDetails(true)} disabled={refreshing} className="p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 disabled:opacity-50">
+            <svg className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+        {/* Simplified Sidebar */}
         <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-              <span className="text-lg">📁</span>
-              <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Metadata</span>
-            </div>
-            <div className="p-6 space-y-5">
-              <StatItem label="Filename" value={project.original_filename || 'Internal Resource'} />
-              <StatItem label="Provisioned" value={new Date(project.created_at).toLocaleString()} />
-              <StatItem label="UUID" value={project.id} isMono />
-            </div>
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-6 space-y-6">
+             <div className="flex items-center gap-2 mb-2">
+               <span className="text-xl">📊</span>
+               <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Project Metadata</h3>
+             </div>
+             <StatItem label="Filename" value={project.original_filename || 'Local Source'} />
+             <StatItem label="Archive Size" value={(project.total_size / (1024 * 1024)).toFixed(2) + ' MB'} />
+             <StatItem label="Created At" value={new Date(project.created_at).toLocaleDateString()} />
+             <div className="pt-2">
+               <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-1.5">System Reference</p>
+               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 font-mono text-[10px] text-slate-500 break-all">{project.id}</div>
+             </div>
           </div>
-
-          {codeServer && (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 bg-indigo-50/50 border-b border-indigo-100 flex items-center gap-2">
-                <span className="text-lg">⚡</span>
-                <span className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Runtime Info</span>
-              </div>
-              <div className="p-6 space-y-5">
-                <StatItem 
-                  label="IDE Status" 
-                  value={`${codeServer.status?.toUpperCase()} (${codeServer.pod_status || 'N/A'})`} 
-                  status={codeServer.status === 'running' ? 'ready' : (codeServer.status === 'stopped' ? 'error' : 'pending')} 
-                />
-                
-                <div className="pt-1">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Access Password</p>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-grow bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 font-mono text-xs text-slate-600 flex items-center min-h-[38px] overflow-hidden">
-                      <span className={showPassword ? 'break-all' : 'blur-[4px] select-none break-all'}>
-                        {codeServer.password || 'No password set'}
-                      </span>
-                    </div>
-                    <button onClick={() => setShowPassword(!showPassword)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200">
-                      {showPassword ? '🙈' : '👁️'}
-                    </button>
-                    {codeServer.password && (
-                      <button 
-                        onClick={() => handleCopyPassword(codeServer.password)}
-                        className={`p-2 rounded-lg ${copyStatus === 'copied' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                      >
-                        {copyStatus === 'copied' ? '✓' : '📋'}
-                      </button>
-                    )}
+          
+          {project.pvc_name && (
+            <div className="bg-indigo-50/30 rounded-3xl border border-indigo-100/50 p-6">
+               <h3 className="text-[10px] font-black uppercase text-indigo-400 tracking-[0.2em] mb-4">Persistent Storage</h3>
+               <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-700">{project.pvc_name}</p>
+                    <p className="text-[10px] text-indigo-500 font-medium">Status: {project.pvc_status || 'Bound'}</p>
                   </div>
-                </div>
-
-                <StatItem label="Allocation" value={`${codeServer.cpu_limit} CPU / ${codeServer.memory_limit} RAM`} />
-                <StatItem label="Pod Identifier" value={codeServer.pod_name || 'Allocating...'} isMono />
-                
-                {codeServer.access_url && (
-                  <div className="pt-2">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Public Endpoint</p>
-                    <a href={codeServer.access_url} target="_blank" rel="noreferrer" className="text-[11px] font-mono text-indigo-600 break-all hover:underline bg-indigo-50/50 p-2 rounded-lg block border border-indigo-100/50">
-                      {codeServer.access_url}
-                    </a>
-                  </div>
-                )}
-              </div>
+                  <div className="text-xl">💾</div>
+               </div>
             </div>
           )}
         </div>
 
-        <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 shadow-sm min-h-[700px] flex flex-col overflow-hidden">
-          <div className="flex border-b border-slate-100 px-6 bg-slate-50/20 overflow-x-auto scrollbar-hide">
+        {/* Main Interface */}
+        <div className="lg:col-span-3 bg-white rounded-[32px] border border-slate-200 shadow-sm min-h-[750px] flex flex-col overflow-hidden">
+          <div className="flex border-b border-slate-100 px-8 bg-slate-50/30 overflow-x-auto no-scrollbar">
             <TabBtn active={activeTab === 'files'} onClick={() => setActiveTab('files')}>Files</TabBtn>
-            <TabBtn active={activeTab === 'infra'} onClick={() => setActiveTab('infra')}>K8s Infra</TabBtn>
-            <TabBtn active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>Init Logs</TabBtn>
-            <TabBtn active={activeTab === 'deployLogs'} onClick={() => setActiveTab('deployLogs')}>Deploy Logs</TabBtn>
-            <TabBtn active={activeTab === 'csLogs'} onClick={() => setActiveTab('csLogs')}>Code-Server Logs</TabBtn>
+            <TabBtn active={activeTab === 'editor'} onClick={() => setActiveTab('editor')}>IDE Hub</TabBtn>
+            <TabBtn active={activeTab === 'wiki'} onClick={() => setActiveTab('wiki')}>CodeWiki</TabBtn>
+            <TabBtn active={activeTab === 'infra'} onClick={() => setActiveTab('infra')}>K8s Topology</TabBtn>
+            <TabBtn active={activeTab === 'systemLogs'} onClick={() => setActiveTab('systemLogs')}>System Logs</TabBtn>
           </div>
 
           <div className="flex-1 p-8">
             {activeTab === 'files' && (
-              project.status === 'ready' ? (
-                <div className="space-y-6">
-                  {/* File searching & table logic ... */}
-                  <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-                    <div className="relative w-full sm:max-w-md">
-                      <input 
-                        type="text" 
-                        placeholder="Search files by path..." 
-                        value={fileSearch}
-                        onChange={(e) => { setFileSearch(e.target.value); setFilePage(1); }}
-                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
-                      />
-                      <svg className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                    </div>
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                      <label className="text-[10px] font-black text-slate-400 uppercase whitespace-nowrap">Page Size:</label>
-                      <select 
-                        value={filePageSize} 
-                        onChange={(e) => { setFilePageSize(Number(e.target.value)); setFilePage(1); }}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-600 outline-none"
-                      >
-                        <option value={100}>100</option>
-                        <option value={500}>500</option>
-                        <option value={1000}>1000</option>
-                        <option value={5000}>5000</option>
-                      </select>
-                    </div>
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
+                  <div className="relative w-full max-w-md">
+                    <input type="text" placeholder="Filter files..." value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
+                    <svg className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth={2} /></svg>
                   </div>
+                </div>
 
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-left">
-                      <thead className="text-[10px] font-black text-slate-400 uppercase bg-slate-50/50 border-b border-slate-100">
-                        <tr>
-                          <th className="py-4 px-6">Path</th>
-                          <th className="py-4 px-4 text-right">Size</th>
-                          <th className="py-4 px-6 text-right">Actions</th>
+                <div className="rounded-2xl border border-slate-100 overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase">
+                      <tr><th className="px-6 py-4">Path</th><th className="px-6 py-4 text-right">Size</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {paginatedFiles.length > 0 ? paginatedFiles.map((f, i) => (
+                        <tr key={i} className="hover:bg-slate-50/80 group">
+                          <td className="px-6 py-3.5 text-sm font-medium text-slate-700 truncate max-w-sm"><span className="mr-3 opacity-50">📄</span>{f.path}</td>
+                          <td className="px-6 py-3.5 text-right font-mono text-[11px] text-slate-400">{(f.size / 1024).toFixed(1)} KB</td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {paginatedFiles.length > 0 ? (
-                          paginatedFiles.map((f, i) => (
-                            <tr key={i} className="hover:bg-indigo-50/30 transition-colors group">
-                              <td className="py-3 px-6 text-sm text-slate-700 font-medium truncate max-w-[300px]">
-                                 <span className="mr-3">📄</span>{f.path}
-                              </td>
-                              <td className="py-3 px-4 text-right font-mono text-[11px] text-slate-400">{formatSize(f.size)}</td>
-                              <td className="py-3 px-6 text-right">
-                                <div className="flex items-center justify-end gap-2">
-                                  {project.code_server_status === 'running' && (
-                                    <button onClick={() => handleEditInIDE(f)} className="p-1.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Edit in Code-Server">
-                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                                    </button>
-                                  )}
-                                  <button onClick={() => handleDownloadFile(f)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Download File">
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr><td colSpan={3} className="py-20 text-center text-slate-400 italic">No files match your search.</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                      )) : <tr><td colSpan={2} className="py-20 text-center text-slate-400 italic">No files match criteria.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
-                  {totalFilePages > 1 && (
-                    <div className="flex items-center justify-between border-t border-slate-100 pt-6">
-                      <p className="text-xs text-slate-400 font-medium">Showing <span className="text-slate-700">{(filePage - 1) * filePageSize + 1}</span> to <span className="text-slate-700">{Math.min(filePage * filePageSize, filteredFiles.length)}</span> of <span className="text-slate-700">{filteredFiles.length}</span></p>
-                      <div className="flex gap-2">
-                        <button disabled={filePage === 1} onClick={() => setFilePage(p => p - 1)} className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-30">Prev</button>
-                        <button disabled={filePage === totalFilePages} onClick={() => setFilePage(p => p + 1)} className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-30">Next</button>
+            {activeTab === 'editor' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="p-8 rounded-[24px] bg-slate-50 border border-slate-100 space-y-6">
+                      <div className="flex justify-between items-start">
+                        <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">IDE Context</h4>
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${codeServer?.status === 'running' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                          {codeServer?.status || 'Provisioning'}
+                        </span>
+                      </div>
+                      
+                      <StatItem label="Pod Identifier" value={codeServer?.pod_name || 'Allocating...'} isMono />
+                      
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Editor Credentials</p>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2 font-mono text-xs text-slate-600 truncate">
+                            <span className={showIdePassword ? '' : 'blur-sm select-none'}>{codeServer?.password || 'No pwd set'}</span>
+                          </div>
+                          <button onClick={() => setShowIdePassword(!showIdePassword)} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50">{showIdePassword ? '🙈' : '👁️'}</button>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2">
+                         <button onClick={() => handleIDEAction('start')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Start</button>
+                         <button onClick={() => handleIDEAction('stop')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Stop</button>
+                         <button onClick={() => handleIDEAction('restart')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Restart</button>
+                      </div>
+                   </div>
+
+                   <div className="p-8 rounded-[24px] bg-indigo-50/30 border border-indigo-100/50 space-y-6">
+                      <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest">Infrastructure Management</h4>
+                      <p className="text-xs text-indigo-700 leading-relaxed">Modify container runtime parameters or execute deep reconstruction of the IDE workspace.</p>
+                      
+                      <div className="space-y-3">
+                         <button 
+                           onClick={() => setConfirmConfig({
+                             isOpen: true,
+                             title: 'Recreate Editor IDE',
+                             message: 'This will purge the current container deployment and spin up a fresh instance. Workspace files are preserved.',
+                             action: () => handleIDEAction('recreate'),
+                             isDanger: false
+                           })}
+                           className="w-full px-5 py-3 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                         >
+                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                           Recreate Deployment
+                         </button>
+                         <button 
+                           onClick={() => setConfirmConfig({
+                             isOpen: true,
+                             title: 'Delete IDE Instance',
+                             message: 'Completely remove the IDE runtime. Storage remains intact.',
+                             action: () => handleIDEAction('delete'),
+                             isDanger: true
+                           })}
+                           className="w-full px-5 py-3 border border-red-200 text-red-600 rounded-xl text-xs font-bold hover:bg-red-50 transition-all"
+                         >
+                           Terminate IDE Runtime
+                         </button>
+                      </div>
+                   </div>
+                 </div>
+
+                 <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">IDE Container Logs (Runtime)</h5>
+                      <div className="flex items-center gap-2">
+                        <select value={ideLogLines} onChange={(e) => setIdeLogLines(Number(e.target.value))} className="bg-white border border-slate-200 rounded-lg text-[10px] font-bold px-2 py-1 outline-none">
+                          <option value={100}>100 Lines</option>
+                          <option value={500}>500 Lines</option>
+                        </select>
+                        <button onClick={fetchIdeLogs} className="p-1 text-indigo-600"><svg className={`w-4 h-4 ${isIdeLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg></button>
                       </div>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-center p-12">
-                   <div className="w-16 h-16 border-4 border-indigo-50 border-t-indigo-600 rounded-full animate-spin mb-6" />
-                   <h3 className="text-xl font-black text-slate-800">Environment Setup...</h3>
-                </div>
-              )
+                    <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] text-emerald-400/80 h-96 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
+                      {isIdeLogsLoading ? 'Fetching stream...' : ideLogs}
+                    </div>
+                 </div>
+              </div>
+            )}
+
+            {activeTab === 'wiki' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">
+                 {!wikiData ? (
+                   <div className="max-w-xl mx-auto py-12">
+                      <div className="text-center mb-10">
+                         <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl">📖</div>
+                         <h3 className="text-xl font-black text-slate-900">Provision CodeWiki</h3>
+                         <p className="text-slate-500 text-sm mt-2">Generate deep architectural documentation from your source using AI-powered static analysis.</p>
+                      </div>
+                      <form onSubmit={handleCreateWiki} className="space-y-5 p-8 bg-slate-50 border border-slate-100 rounded-3xl shadow-sm">
+                         <div>
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">AI Gateway Key</label>
+                           <input type="password" placeholder="Enter API Key for Analysis..." value={wikiConfig.api_key} onChange={(e) => setWikiConfig({...wikiConfig, api_key: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-mono" />
+                         </div>
+                         <div className="grid grid-cols-2 gap-4">
+                           <div>
+                             <label className="text-[10px] font-black text-slate-400 uppercase mb-1.5 block">CPU Limit</label>
+                             <select value={wikiConfig.cpu_limit} onChange={(e) => setWikiConfig({...wikiConfig, cpu_limit: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold">
+                               <option value="1000m">1.0 Core</option>
+                               <option value="2000m">2.0 Cores</option>
+                             </select>
+                           </div>
+                           <div>
+                             <label className="text-[10px] font-black text-slate-400 uppercase mb-1.5 block">RAM Limit</label>
+                             <select value={wikiConfig.memory_limit} onChange={(e) => setWikiConfig({...wikiConfig, memory_limit: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold">
+                               <option value="1024Mi">1024 Mi</option>
+                               <option value="2048Mi">2048 Mi</option>
+                             </select>
+                           </div>
+                         </div>
+                         <button type="submit" disabled={actionLoading} className="w-full py-3.5 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all">Initialize Wiki Environment</button>
+                      </form>
+                   </div>
+                 ) : (
+                   <div className="space-y-8">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="md:col-span-2 p-8 rounded-[24px] bg-emerald-50/30 border border-emerald-100/50 flex flex-col justify-between">
+                           <div>
+                             <div className="flex justify-between mb-6">
+                               <h4 className="text-sm font-black text-emerald-900 uppercase tracking-widest">CodeWiki Status</h4>
+                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${wikiData.status === 'running' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                                 {wikiData.status}
+                               </span>
+                             </div>
+                             <div className="grid grid-cols-2 gap-8">
+                               <StatItem label="Pod Status" value={wikiData.pod_status || 'Checking...'} />
+                               <StatItem label="Provisioned At" value={new Date(wikiData.created_at).toLocaleString()} />
+                               <StatItem label="Allocation" value={`${wikiData.cpu_limit} / ${wikiData.memory_limit}`} />
+                               <StatItem label="Deployment" value={wikiData.deployment_name || 'N/A'} isMono />
+                             </div>
+                           </div>
+                           <div className="flex gap-3 mt-8">
+                              <button 
+                                onClick={() => handleWikiAction('start')} 
+                                disabled={!['stopped', 'error'].includes(wikiData.status)}
+                                className="flex-1 px-4 py-2 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-100 disabled:cursor-not-allowed transition-all"
+                              >
+                                Start
+                              </button>
+                              <button 
+                                onClick={() => handleWikiAction('stop')} 
+                                disabled={wikiData.status !== 'running'}
+                                className="flex-1 px-4 py-2 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-100 disabled:cursor-not-allowed transition-all"
+                              >
+                                Stop
+                              </button>
+                              <button 
+                                onClick={() => handleWikiAction('restart')} 
+                                disabled={wikiData.status !== 'running'}
+                                className="flex-1 px-4 py-2 bg-white border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-100 disabled:cursor-not-allowed transition-all"
+                              >
+                                Restart
+                              </button>
+                              <button 
+                                onClick={() => handleWikiAction('delete')} 
+                                disabled={wikiData.status === 'deleting'}
+                                className="px-4 py-2 border border-red-200 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                              >
+                                Terminate
+                              </button>
+                           </div>
+                        </div>
+                        <div className="p-8 rounded-[24px] bg-slate-900 text-white space-y-6">
+                           <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Analysis Control</h4>
+                           <p className="text-xs text-slate-400 leading-relaxed">Trigger static analysis tasks to scan project structure and generate updated documentation pages.</p>
+                           <button 
+                             onClick={handleCreateWikiTask} 
+                             disabled={wikiData.status !== 'running' || actionLoading} 
+                             className="w-full py-3 bg-white text-slate-900 rounded-xl font-bold text-xs hover:bg-slate-100 transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                           >
+                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                             New Analysis Task
+                           </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                           <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Active Analysis Tasks</h5>
+                           <button onClick={fetchWikiTasks} className="text-indigo-600 text-[10px] font-bold hover:underline">Refresh Tasks</button>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 overflow-hidden">
+                           <table className="w-full text-left text-xs">
+                             <thead className="bg-slate-50 border-b border-slate-100 text-[9px] font-black text-slate-400 uppercase">
+                               <tr><th className="px-6 py-3">Task ID</th><th className="px-6 py-3">Status</th><th className="px-6 py-3">Started</th><th className="px-6 py-3 text-right">Actions</th></tr>
+                             </thead>
+                             <tbody className="divide-y divide-slate-50">
+                               {wikiTasks.length > 0 ? wikiTasks.map((t, i) => (
+                                 <tr key={i} className="hover:bg-slate-50/80">
+                                   <td className="px-6 py-3 font-mono text-slate-500">{t.id?.substring(0,8)}...</td>
+                                   <td className="px-6 py-3"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${t.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{t.status}</span></td>
+                                   <td className="px-6 py-3 text-slate-400">{new Date(t.created_at).toLocaleTimeString()}</td>
+                                   <td className="px-6 py-3 text-right">
+                                      <button className="text-indigo-600 font-bold hover:underline">View Logs</button>
+                                   </td>
+                                 </tr>
+                               )) : <tr><td colSpan={4} className="py-12 text-center text-slate-400 italic">No analysis tasks running.</td></tr>}
+                             </tbody>
+                           </table>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Wiki Service Logs</h5>
+                        <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] text-emerald-400/80 h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
+                          {isWikiLogsLoading ? 'Loading Wiki stream...' : wikiLogs || 'No log data available.'}
+                        </div>
+                      </div>
+                   </div>
+                 )}
+              </div>
             )}
 
             {activeTab === 'infra' && (
-              <div className="space-y-10">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Compute Context</h5>
-                    {k8sInfo?.deployment ? (
-                       <div className="space-y-3">
-                          <InfraPanel label="Available Replicas" value={`${k8sInfo.deployment.available_replicas}/${k8sInfo.deployment.replicas}`} status={k8sInfo.deployment.available_replicas > 0 ? 'ready' : 'pending'} />
-                          <InfraPanel label="Internal IP" value={k8sInfo.deployment.pods?.[0]?.ip || 'Pending'} sub={`Node: ${k8sInfo.deployment.pods?.[0]?.node}`} />
-                       </div>
-                    ) : <p className="text-xs text-slate-400">Loading K8s context...</p>}
-                  </div>
-
-                  <div className="space-y-4">
-                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Network Ingress</h5>
-                    {k8sInfo?.service ? (
-                       <div className="space-y-3">
-                          <InfraPanel label="Cluster Virtual IP" value={k8sInfo.service.cluster_ip} sub={`Protocol: TCP/80`} />
-                          <InfraPanel label="External Access" value={k8sInfo.service.load_balancer?.[0]?.ip || 'None'} status={k8sInfo.service.load_balancer?.[0]?.ip ? 'ready' : 'pending'} />
-                       </div>
-                    ) : <p className="text-xs text-slate-400">Network sync in progress.</p>}
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Persistent Storage</h5>
-                    {k8sInfo?.pvc ? (
-                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <InfraPanel label="Storage Class" value={k8sInfo.pvc.storage_class} isMono />
-                          <InfraPanel label="Provisioned Size" value={k8sInfo.pvc.capacity} status={k8sInfo.pvc.status === 'Bound' ? 'ready' : 'pending'} />
-                          <InfraPanel label="Volume ID" value={k8sInfo.pvc.volume_name} isMono />
-                       </div>
-                    ) : <p className="text-xs text-slate-400">Volume lookup active.</p>}
-                </div>
-
-                <div className="bg-slate-900 rounded-3xl p-8 relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-                    <svg className="w-24 h-24 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-                  </div>
-                  <div className="relative z-10">
-                    <h4 className="text-lg font-black text-white mb-2">Infrastructure Maintenance</h4>
-                    <p className="text-slate-400 text-sm max-w-lg mb-8">Execute reconstruction operations on project resources.</p>
-                    <div className="flex flex-wrap gap-4">
-                      <button 
-                        onClick={() => setConfirmConfig({
-                          isOpen: true,
-                          title: 'Recreate IDE',
-                          message: 'This will delete the current IDE deployment and start a new one.',
-                          action: () => handleIDEAction('recreate'),
-                          isDanger: false
-                        })}
-                        disabled={actionLoading}
-                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all flex items-center gap-2"
-                      >
-                        Recreate IDE
-                      </button>
-
-                      <button 
-                        onClick={() => setConfirmConfig({
-                          isOpen: true,
-                          title: 'Recreate PVC',
-                          message: 'DANGER: This will PERMANENTLY DELETE all current storage data.',
-                          action: () => handlePVCAction('recreate'),
-                          isDanger: true
-                        })}
-                        disabled={isPvcActionDisabled}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${
-                          isPvcActionDisabled 
-                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700 opacity-60' 
-                            : 'bg-red-900/40 text-red-200 border border-red-800/50 hover:bg-red-900/60'
-                        }`}
-                      >
-                        Recreate PVC
-                      </button>
-
-                      <button onClick={() => handleIDEAction('restart')} className="px-5 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 transition-colors">Bounce Pod</button>
+              <div className="space-y-10 animate-in fade-in slide-in-from-bottom-2">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kubernetes Deployment</h5>
+                      <InfraPanel label="Deployment Name" value={k8sInfo?.deployment?.name || 'Searching...'} isMono />
+                      <InfraPanel label="Replicas" value={`${k8sInfo?.deployment?.available_replicas || 0}/${k8sInfo?.deployment?.replicas || 0}`} status={k8sInfo?.deployment?.available_replicas > 0 ? 'ready' : 'pending'} />
                     </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'logs' && (
-              <div className="flex flex-col h-full space-y-4">
-                <div className="bg-slate-950 rounded-2xl p-8 font-mono text-[11px] text-emerald-400/80 flex-1 min-h-[450px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
-                  {initLogs ? initLogs : 'Aggregating container stdout...'}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'deployLogs' && (
-              <div className="flex flex-col h-full space-y-6">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex bg-slate-100 p-1 rounded-xl">
-                    {(['all', 'code-server', 'init', 'copy-job'] as const).map(type => (
-                      <button
-                        key={type}
-                        onClick={() => setLogType(type)}
-                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                          logType === type ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
-                        }`}
+                    <div className="space-y-4">
+                      <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Network Service</h5>
+                      <InfraPanel label="Cluster IP" value={k8sInfo?.service?.cluster_ip || 'None'} isMono />
+                      <InfraPanel label="Ingress URL" value={project.access_url || 'Provisioning...'} />
+                    </div>
+                 </div>
+                 
+                 <div className="bg-slate-900 rounded-[32px] p-10 relative overflow-hidden group">
+                   <div className="absolute top-0 right-0 p-10 opacity-10 pointer-events-none group-hover:scale-110 transition-transform">
+                      <svg className="w-24 h-24 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                   </div>
+                   <div className="relative z-10">
+                      <h4 className="text-xl font-black text-white mb-2">Storage Maintenance</h4>
+                      <p className="text-slate-400 text-sm max-w-lg mb-8">Execute deep operations on persistent project storage. These actions can be destructive to existing data on the volume.</p>
+                      <button 
+                         onClick={() => setConfirmConfig({
+                           isOpen: true,
+                           title: 'Purge & Recreate PVC',
+                           message: 'CRITICAL: This will PERMANENTLY ERASE all data in the current workspace and provision a fresh storage volume. This cannot be undone.',
+                           action: () => ApiService.recreatePVC(project.id),
+                           isDanger: true
+                         })}
+                         disabled={actionLoading}
+                         className="px-8 py-3 bg-red-900/40 text-red-200 border border-red-800/50 rounded-xl text-xs font-bold hover:bg-red-900/60 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        {type}
+                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                         Force PVC Reconstruction
+                      </button>
+                   </div>
+                 </div>
+              </div>
+            )}
+
+            {activeTab === 'systemLogs' && (
+              <div className="flex h-full animate-in fade-in">
+                 <div className="w-56 border-r border-slate-100 pr-6 py-2 space-y-2">
+                    <h5 className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-4">Log Sources</h5>
+                    {systemLogs.map((log, idx) => (
+                      <button key={idx} onClick={() => setSelectedSystemLog(idx)} className={`w-full text-left px-4 py-2 rounded-xl text-xs font-bold transition-all ${selectedSystemLog === idx ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                        {log.type}
                       </button>
                     ))}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase">Lines:</label>
-                    <select 
-                      value={logLines} 
-                      onChange={(e) => setLogLines(Number(e.target.value))}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-600 outline-none"
-                    >
-                      {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <button onClick={() => id && fetchDeploymentLogs(id)} disabled={isDeployLogsLoading} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50">
-                      <svg className={`w-4 h-4 ${isDeployLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="flex-1 space-y-6">
-                  {isDeployLogsLoading && !deploymentLogs ? (
-                    <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
-                  ) : (deploymentLogs?.logs?.length > 0 || deploymentLogs?.error) ? (
-                    <>
-                      {deploymentLogs.error && <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold mb-4">API Warning: {deploymentLogs.error}</div>}
-                      {deploymentLogs.logs?.map((log: any, idx: number) => (
-                        <div key={idx} className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${log.source === 'code-server' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>{log.source}</span>
-                            <span className="text-[10px] font-mono text-slate-400">{log.pod}</span>
-                          </div>
-                          <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] min-h-[100px] max-h-[400px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
-                            <span className={log.source === 'code-server' ? 'text-indigo-400/90' : 'text-emerald-400/90'}>{log.content || log.error || 'Empty stream...'}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </>
-                  ) : <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl text-slate-400">No deployment logs found.</div>}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'csLogs' && (
-              <div className="flex flex-col h-full space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">IDE Log Stream</h4>
-                    {csLogsData?.pod_name && <span className="text-[10px] font-mono text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Pod: {csLogsData.pod_name}</span>}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase">Lines:</label>
-                    <select 
-                      value={csLogLines} 
-                      onChange={(e) => setCsLogLines(Number(e.target.value))}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-600 outline-none"
-                    >
-                      {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <button onClick={() => id && fetchCodeServerLogs(id)} disabled={isCsLogsLoading} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50">
-                      <svg className={`w-4 h-4 ${isCsLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1">
-                  {isCsLogsLoading && !csLogsData ? (
-                    <div className="py-20 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>
-                  ) : csLogsData ? (
-                    <div className="space-y-4">
-                      {csLogsData.error && (
-                        <div className="p-4 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-bold flex items-center gap-3">
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                          {csLogsData.error}
-                        </div>
-                      )}
-                      <div className="bg-slate-950 rounded-3xl p-8 font-mono text-[11px] text-indigo-400/90 min-h-[500px] max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
-                        {csLogsData.logs || (csLogsData.error ? '' : 'Log stream is empty...')}
-                      </div>
+                 </div>
+                 <div className="flex-1 pl-8 py-2">
+                    <div className="bg-slate-950 rounded-2xl p-8 font-mono text-[11px] text-emerald-400/80 h-full max-h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-2xl border border-slate-800 scrollbar-thin scrollbar-thumb-slate-800">
+                      {systemLogs[selectedSystemLog]?.content || 'Logging context is being aggregated...'}
                     </div>
-                  ) : (
-                    <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-3xl text-slate-400">
-                      Initialize IDE log fetch to see runtime activity.
-                    </div>
-                  )}
-                </div>
+                 </div>
               </div>
             )}
           </div>
@@ -723,34 +720,5 @@ const ProjectDetail: React.FC = () => {
     </div>
   );
 };
-
-const StatItem = ({ label, value, status, isMono }: { label: string; value: string; status?: string; isMono?: boolean }) => (
-  <div className="group">
-    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-indigo-400 transition-colors">{label}</p>
-    <div className="flex items-center gap-2">
-      {status && (
-        <div className={`w-2 h-2 rounded-full ${status === 'ready' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : (status === 'error' ? 'bg-red-500' : 'bg-amber-400 animate-pulse')}`} />
-      )}
-      <p className={`text-xs font-bold text-slate-700 truncate ${isMono ? 'font-mono tracking-tight text-slate-500' : ''}`}>{value}</p>
-    </div>
-  </div>
-);
-
-const TabBtn = ({ children, active, onClick }: { children?: React.ReactNode; active: boolean; onClick: () => void }) => (
-  <button onClick={onClick} className={`px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all border-b-2 whitespace-nowrap ${active ? 'border-indigo-600 text-indigo-600 bg-indigo-50/20' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>{children}</button>
-);
-
-const InfraPanel = ({ label, value, sub, status, isMono }: { label: string; value: string; sub?: string; status?: string; isMono?: boolean }) => (
-  <div className="p-5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-300 transition-colors group">
-    <div className="flex-1 min-w-0">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-      <p className={`text-sm font-black text-slate-800 truncate mb-0.5 ${isMono ? 'font-mono text-xs text-slate-500' : ''}`}>{value}</p>
-      {sub && <p className="text-[9px] font-bold text-slate-400">{sub}</p>}
-    </div>
-    {status && (
-      <div className={`shrink-0 ml-4 w-2.5 h-2.5 rounded-full ${status === 'ready' ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)]' : (status === 'error' ? 'bg-red-500' : 'bg-amber-400 animate-pulse')}`} />
-    )}
-  </div>
-);
 
 export default ProjectDetail;

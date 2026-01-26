@@ -37,7 +37,6 @@ export const ApiService = {
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const errorData = await response.json();
-          // Extract specific error detail if provided by FastAPI/Flask
           errorMessage = errorData.detail || errorData.error?.message || errorMessage;
         } else {
           const textError = await response.text();
@@ -170,8 +169,80 @@ export const ApiService = {
   },
 
   async getCodeServerLogs(projectId: string, lines: number = 100) {
-    // Matches @app.get(f"{Config.API_PREFIX}/code-servers/{project_id}/logs")
     return this.fetchWithAuth(`/code-servers/${projectId}/logs?lines=${lines}`);
+  },
+
+  // Code Wiki
+  async createCodeWiki(projectId: string, config: { api_key?: string, cpu_limit?: string, memory_limit?: string }) {
+    return this.fetchWithAuth(`/projects/${projectId}/codewiki`, {
+      method: 'POST',
+      body: JSON.stringify(config)
+    });
+  },
+
+  async listCodeWikis(page: number = 1, size: number = 10, status?: string) {
+    let url = `/codewikis?page=${page}&size=${size}`;
+    if (status) url += `&status=${status}`;
+    return this.fetchWithAuth(url);
+  },
+
+  async getCodeWiki(projectId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}`);
+  },
+
+  async deleteCodeWiki(projectId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}`, { method: 'DELETE' });
+  },
+
+  async stopCodeWiki(projectId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/stop`, { method: 'POST' });
+  },
+
+  async startCodeWiki(projectId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/start`, { method: 'POST' });
+  },
+
+  async restartCodeWiki(projectId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/restart`, { method: 'POST' });
+  },
+
+  async getCodeWikiLogs(projectId: string, lines: number = 100) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/logs?lines=${lines}`);
+  },
+
+  async updateCodeWiki(projectId: string, data: { api_key?: string, cpu_limit?: string, memory_limit?: string }) {
+    return this.fetchWithAuth(`/codewikis/${projectId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  },
+
+  // CodeWiki Tasks (Internal Service Proxies)
+  async listCodeWikiTasks(projectId: string, skip: number = 0, limit: number = 100) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks?skip=${skip}&limit=${limit}`);
+  },
+
+  async createCodeWikiTask(projectId: string, taskRequest: any) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(taskRequest)
+    });
+  },
+
+  async getCodeWikiTask(projectId: string, taskId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks/${taskId}`);
+  },
+
+  async deleteCodeWikiTask(projectId: string, taskId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks/${taskId}`, { method: 'DELETE' });
+  },
+
+  async getCodeWikiTaskLogs(projectId: string, taskId: string, lines: number = 1000) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks/${taskId}/logs?lines=${lines}`);
+  },
+
+  async stopCodeWikiTask(projectId: string, taskId: string) {
+    return this.fetchWithAuth(`/codewikis/${projectId}/tasks/${taskId}/stop`, { method: 'POST' });
   },
 
   async getHealth() {
