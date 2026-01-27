@@ -67,9 +67,11 @@ const ProjectDetail: React.FC = () => {
   const [wikiK8s, setWikiK8s] = useState<any>(null);
   const [wikiLogs, setWikiLogs] = useState<string>('');
   const [wikiTasks, setWikiTasks] = useState<any[]>([]);
+  const [selectedWikiTaskLogs, setSelectedWikiTaskLogs] = useState<{ id: string, logs: string } | null>(null);
   const [isWikiLoading, setIsWikiLoading] = useState(false);
   const [isWikiTaskLoading, setIsWikiTaskLoading] = useState(false);
   const [isWikiLogsLoading, setIsWikiLogsLoading] = useState(false);
+  const [isWikiLogModalOpen, setIsWikiLogModalOpen] = useState(false);
   
   // CodeWiki Creation Form
   const [wikiConfig, setWikiConfig] = useState({ api_key: '', cpu_limit: '1000m', memory_limit: '1024Mi' });
@@ -169,7 +171,9 @@ const ProjectDetail: React.FC = () => {
     try {
       setIsWikiTaskLoading(true);
       const data = await ApiService.listCodeWikiTasks(id);
-      setWikiTasks(data.tasks || []);
+      // Handle direct array response from internal proxy
+      const tasks = Array.isArray(data) ? data : (data.tasks || []);
+      setWikiTasks(tasks);
     } catch (err: any) {
       console.warn("Could not fetch Wiki tasks:", err.message);
     } finally {
@@ -177,11 +181,21 @@ const ProjectDetail: React.FC = () => {
     }
   };
 
+  const fetchWikiTaskLogs = async (taskId: string) => {
+    if (!id) return;
+    try {
+      const data = await ApiService.getCodeWikiTaskLogs(id, taskId, 1000);
+      setSelectedWikiTaskLogs({ id: taskId, logs: data.logs || 'No task logs captured.' });
+    } catch (err: any) {
+      showNotification('error', `Failed to fetch task logs: ${err.message}`);
+    }
+  };
+
   const fetchWikiLogs = async () => {
     if (!id) return;
     try {
       setIsWikiLogsLoading(true);
-      const data = await ApiService.getCodeWikiLogs(id, 100);
+      const data = await ApiService.getCodeWikiLogs(id, 300);
       setWikiLogs(data.logs || '');
     } catch (err: any) {
       setWikiLogs(`Wiki logs unavailable: ${err.message}`);
@@ -456,9 +470,27 @@ const ProjectDetail: React.FC = () => {
                       </div>
 
                       <div className="flex gap-2 pt-2">
-                         <button onClick={() => handleIDEAction('start')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Start</button>
-                         <button onClick={() => handleIDEAction('stop')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Stop</button>
-                         <button onClick={() => handleIDEAction('restart')} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors">Restart</button>
+                         <button 
+                           onClick={() => handleIDEAction('start')} 
+                           disabled={!['stopped', 'error'].includes(codeServer?.status)}
+                           className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                         >
+                            Start
+                         </button>
+                         <button 
+                           onClick={() => handleIDEAction('stop')} 
+                           disabled={codeServer?.status !== 'running'}
+                           className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                         >
+                            Stop
+                         </button>
+                         <button 
+                           onClick={() => handleIDEAction('restart')} 
+                           disabled={codeServer?.status !== 'running'}
+                           className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                         >
+                            Restart
+                         </button>
                       </div>
                    </div>
 
@@ -475,7 +507,8 @@ const ProjectDetail: React.FC = () => {
                              action: () => handleIDEAction('recreate'),
                              isDanger: false
                            })}
-                           className="w-full px-5 py-3 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                           disabled={['creating', 'deleting', 'pending'].includes(codeServer?.status) || actionLoading}
+                           className="w-full px-5 py-3 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                          >
                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                            Recreate Deployment
@@ -488,7 +521,8 @@ const ProjectDetail: React.FC = () => {
                              action: () => handleIDEAction('delete'),
                              isDanger: true
                            })}
-                           className="w-full px-5 py-3 border border-red-200 text-red-600 rounded-xl text-xs font-bold hover:bg-red-50 transition-all"
+                           disabled={codeServer?.status === 'deleting' || actionLoading}
+                           className="w-full px-5 py-3 border border-red-200 text-red-600 rounded-xl text-xs font-bold hover:bg-red-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                          >
                            Terminate IDE Runtime
                          </button>
@@ -554,9 +588,14 @@ const ProjectDetail: React.FC = () => {
                            <div>
                              <div className="flex justify-between mb-6">
                                <h4 className="text-sm font-black text-emerald-900 uppercase tracking-widest">CodeWiki Status</h4>
-                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${wikiData.status === 'running' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
-                                 {wikiData.status}
-                               </span>
+                               <div className="flex items-center gap-3">
+                                 <button onClick={() => setIsWikiLogModalOpen(true)} className="px-3 py-1 bg-white border border-emerald-200 rounded-lg text-[10px] font-black text-emerald-600 uppercase hover:bg-emerald-50 shadow-sm transition-all">
+                                   View Service Logs
+                                 </button>
+                                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${wikiData.status === 'running' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                                   {wikiData.status}
+                                 </span>
+                               </div>
                              </div>
                              <div className="grid grid-cols-2 gap-8">
                                <StatItem label="Pod Status" value={wikiData.pod_status || 'Checking...'} />
@@ -583,7 +622,7 @@ const ProjectDetail: React.FC = () => {
                               <button 
                                 onClick={() => handleWikiAction('restart')} 
                                 disabled={wikiData.status !== 'running'}
-                                className="flex-1 px-4 py-2 bg-white border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-100 disabled:cursor-not-allowed transition-all"
+                                className="flex-1 px-4 py-2 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-100 disabled:cursor-not-allowed transition-all"
                               >
                                 Restart
                               </button>
@@ -613,33 +652,67 @@ const ProjectDetail: React.FC = () => {
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
                            <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Active Analysis Tasks</h5>
-                           <button onClick={fetchWikiTasks} className="text-indigo-600 text-[10px] font-bold hover:underline">Refresh Tasks</button>
+                           <button onClick={fetchWikiTasks} disabled={isWikiTaskLoading} className="text-indigo-600 text-[10px] font-bold hover:underline flex items-center gap-1">
+                             {isWikiTaskLoading && <div className="w-2 h-2 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>}
+                             Refresh Tasks
+                           </button>
                         </div>
-                        <div className="rounded-2xl border border-slate-100 overflow-hidden">
+                        <div className="rounded-2xl border border-slate-100 overflow-hidden bg-white shadow-sm">
                            <table className="w-full text-left text-xs">
                              <thead className="bg-slate-50 border-b border-slate-100 text-[9px] font-black text-slate-400 uppercase">
-                               <tr><th className="px-6 py-3">Task ID</th><th className="px-6 py-3">Status</th><th className="px-6 py-3">Started</th><th className="px-6 py-3 text-right">Actions</th></tr>
+                               <tr>
+                                 <th className="px-6 py-3">Task ID</th>
+                                 <th className="px-6 py-3">Status</th>
+                                 <th className="px-6 py-3">Started</th>
+                                 <th className="px-6 py-3 text-right">Actions</th>
+                               </tr>
                              </thead>
                              <tbody className="divide-y divide-slate-50">
                                {wikiTasks.length > 0 ? wikiTasks.map((t, i) => (
-                                 <tr key={i} className="hover:bg-slate-50/80">
-                                   <td className="px-6 py-3 font-mono text-slate-500">{t.id?.substring(0,8)}...</td>
-                                   <td className="px-6 py-3"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${t.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{t.status}</span></td>
-                                   <td className="px-6 py-3 text-slate-400">{new Date(t.created_at).toLocaleTimeString()}</td>
-                                   <td className="px-6 py-3 text-right">
-                                      <button className="text-indigo-600 font-bold hover:underline">View Logs</button>
+                                 <React.Fragment key={t.id || i}>
+                                   <tr className="hover:bg-slate-50/80 transition-colors">
+                                     <td className="px-6 py-3 font-mono text-slate-500">{t.id?.substring(0,8)}...</td>
+                                     <td className="px-6 py-3">
+                                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase flex w-fit items-center gap-1.5 ${
+                                         t.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
+                                         t.status === 'failed' ? 'bg-red-50 text-red-600 border border-red-100' : 
+                                         'bg-amber-50 text-amber-600 border border-amber-100 animate-pulse'
+                                       }`}>
+                                         {t.status}
+                                       </span>
+                                       {t.error_message && <p className="text-[9px] text-red-400 mt-1 max-w-[200px] truncate" title={t.error_message}>{t.error_message}</p>}
+                                     </td>
+                                     <td className="px-6 py-3 text-slate-400">{new Date(t.created_at).toLocaleString()}</td>
+                                     <td className="px-6 py-3 text-right">
+                                        <button onClick={() => fetchWikiTaskLogs(t.id)} className="text-indigo-600 font-bold hover:underline">View Logs</button>
+                                     </td>
+                                   </tr>
+                                   {selectedWikiTaskLogs?.id === t.id && (
+                                     <tr>
+                                       <td colSpan={4} className="bg-slate-900 p-8 animate-in slide-in-from-top-2">
+                                          <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-800">
+                                             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                               <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                                               Analysis Stream: {t.id}
+                                             </p>
+                                             <button onClick={() => setSelectedWikiTaskLogs(null)} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white text-[10px] font-bold transition-all uppercase">Close Logs</button>
+                                          </div>
+                                          <div className="font-mono text-[11px] text-emerald-400/90 whitespace-pre-wrap h-[600px] overflow-y-auto leading-relaxed scrollbar-thin scrollbar-track-slate-900 scrollbar-thumb-slate-700">
+                                            {selectedWikiTaskLogs.logs}
+                                          </div>
+                                       </td>
+                                     </tr>
+                                   )}
+                                 </React.Fragment>
+                               )) : (
+                                 <tr>
+                                   <td colSpan={4} className="py-12 text-center text-slate-400 italic">
+                                     {isWikiTaskLoading ? 'Searching for tasks...' : 'No analysis tasks found for this project.'}
                                    </td>
                                  </tr>
-                               )) : <tr><td colSpan={4} className="py-12 text-center text-slate-400 italic">No analysis tasks running.</td></tr>}
+                               )}
                              </tbody>
                            </table>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Wiki Service Logs</h5>
-                        <div className="bg-slate-950 rounded-2xl p-6 font-mono text-[11px] text-emerald-400/80 h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
-                          {isWikiLogsLoading ? 'Loading Wiki stream...' : wikiLogs || 'No log data available.'}
                         </div>
                       </div>
                    </div>
@@ -717,6 +790,36 @@ const ProjectDetail: React.FC = () => {
         onConfirm={async () => { await confirmConfig.action(); setConfirmConfig(p => ({ ...p, isOpen: false })); }}
         onCancel={() => setConfirmConfig(p => ({ ...p, isOpen: false }))}
       />
+
+      {/* CodeWiki Service Log Modal */}
+      {isWikiLogModalOpen && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-8 bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-slate-950 rounded-[32px] w-full max-w-6xl h-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-800 animate-in zoom-in duration-300">
+            <div className="p-8 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.5)]"></div>
+                <h3 className="text-xl font-black text-white uppercase tracking-widest">Wiki Service Runtime Stream</h3>
+              </div>
+              <div className="flex items-center gap-4">
+                <button onClick={fetchWikiLogs} className="p-2 text-slate-400 hover:text-white transition-colors">
+                   <svg className={`w-5 h-5 ${isWikiLogsLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                </button>
+                <button onClick={() => setIsWikiLogModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 p-2.5 rounded-full text-slate-300 transition-all">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 p-8 overflow-hidden">
+               <div className="bg-black/50 rounded-2xl h-full font-mono text-[12px] text-emerald-400/80 p-6 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner scrollbar-thin scrollbar-track-slate-900 scrollbar-thumb-slate-700">
+                  {isWikiLogsLoading ? 'Synchronizing logs...' : wikiLogs || 'No active service output detected.'}
+               </div>
+            </div>
+            <div className="p-6 border-t border-slate-800 flex justify-end">
+               <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Internal Service Relay: {id}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
